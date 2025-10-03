@@ -35,10 +35,12 @@ python main.py --config_filename setting/abide_DHGFormer.yaml
 ## Cite our work
 ```bibtex
 @inproceedings{xue2025dhgformer,
-  title = {DHGFormer: Dynamic Hierarchical Graph Transformer for Disorder Brain Disease Diagnosis},
-  author = {Xue, Rundong and Hu, Hao and Zhang, Zeyu and Han, Xiangmin and Wang, Juan and Gao, Yue and Du, Shaoyi},
-  booktitle = {International Conference on Medical Image Computing and Computer-Assisted Intervention},
-  year = {2025},
+  title={DHGFormer: Dynamic Hierarchical Graph Transformer for Disorder Brain Disease Diagnosis},
+  author={Xue, Rundong and Hu, Hao and Zhang, Zeyu and Han, Xiangmin and Wang, Juan and Gao, Yue and Du, Shaoyi},
+  booktitle={International Conference on Medical Image Computing and Computer-Assisted Intervention},
+  pages={268--278},
+  year={2025},
+  organization={Springer}
 }
 ```
 
