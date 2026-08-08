@@ -126,8 +126,28 @@ class CrossGCNPredictor(nn.Module):
         return (node_features + propagated_features) / 2
 
     def forward(self, adjacency_matrix, intra_adjacency, inter_adjacency, node_features):
-        batch_size = intra_adjacency.shape[0]
+        A = intra_adjacency
 
+        # Add self-loops
+        I = torch.eye(A.size(-1), device=A.device).unsqueeze(0)
+        A_hat = A + I
+
+        # Degree matrix
+        degree = A_hat.sum(dim=-1)
+
+        # D^(-1/2)
+        degree_inv_sqrt = degree.clamp(min=1e-8).pow(-0.5)
+
+        # D^(-1/2) A D^(-1/2)
+        A_norm = (
+            degree_inv_sqrt.unsqueeze(-1)
+            * A_hat
+            * degree_inv_sqrt.unsqueeze(-2)
+        )
+                
+        
+        batch_size = intra_adjacency.shape[0]
+        intra_adjacency = A_norm
         # First propagation layer
         intra_features = torch.einsum('ijk,ijp->ijp', intra_adjacency, node_features)
         subnetwork_features = self.average_subnetwork_features(node_features, self.subnetwork_ends)
@@ -227,7 +247,24 @@ class DHGFormer(nn.Module):
                 roi_num=roi_num
             )
 
-        self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
+        # self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
+        if model_config['gnn_type'] == 'conv':
+            self.predictor = CrossGCNPredictor(
+            node_feature_dim,
+            roi_num=roi_num
+            )
+
+        elif model_config['gnn_type'] == 'gat':
+            self.predictor = CrossGATPredictor(
+                node_feature_dim,
+                roi_num=roi_num
+            )
+
+        elif model_config['gnn_type'] == 'gin':
+            self.predictor = CrossGINPredictor(
+                node_feature_dim,
+                roi_num=roi_num
+            )
 
         # Load node cluster mapping
         with open('./node_clus_map.pickle', 'rb') as f:
