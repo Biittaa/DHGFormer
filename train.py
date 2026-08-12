@@ -27,6 +27,10 @@ class BasicTrain:
         self.best_model = None
         self.best_acc_val = 0
         self.best_auc_val = 0
+        self.best_auc_test = 0
+        self.best_sen = 0
+        self.best_spe = 0
+        self.best_f1 = 0
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
 
         self.group_loss = train_config['group_loss']
@@ -155,9 +159,9 @@ class BasicTrain:
             test_result, con_matrix = self.test_per_epoch(self.test_dataloader,
                                               self.test_loss, self.test_accuracy)
 
-            if self.best_acc <= self.test_accuracy.avg:
-                self.best_acc = self.test_accuracy.avg
-                self.best_model = self.model
+            # if self.best_acc <= self.test_accuracy.avg:
+            #     self.best_acc = self.test_accuracy.avg
+            #     self.best_model = self.model
 
             if (con_matrix[0][0] + con_matrix[1][0]) != 0:
                 SEN = con_matrix[0][0] / (con_matrix[0][0] + con_matrix[1][0])
@@ -168,6 +172,22 @@ class BasicTrain:
                 SPE = con_matrix[1][1] / (con_matrix[1][1] + con_matrix[0][1])
             else:
                 SPE = 0
+                
+                
+            if self.best_acc <= self.val_accuracy.avg:
+                self.best_acc_val = self.val_accuracy.avg
+                self.best_auc_val = val_result[0]
+                self.best_model = self.model
+                
+                self.best_acc = self.test_accuracy.avg
+                self.best_auc_test = test_result[0]
+                self.best_sen = SEN
+                self.best_spe = SPE
+                self.best_f1 = test_result[-4]
+                
+                
+                  
+                
 
             self.logger.info(" | ".join([
                 f'Epoch[{epoch}/{self.epochs}]',
@@ -196,3 +216,11 @@ class BasicTrain:
         if self.save_learnable_graph:
             self.generate_save_learnable_matrix()
         self.save_result(training_process, txt)
+        return {
+            'acc': self.best_acc,
+            'auc': self.best_auc_test,
+            'sen': self.best_sen,
+            'spe': self.best_spe,
+            'f1': self.best_f1,
+        }
+        
