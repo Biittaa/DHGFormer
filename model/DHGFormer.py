@@ -7,6 +7,7 @@ from torch.nn import Linear
 import math
 from model.Encoder import FCEncoder
 import pickle
+from model.smriEncoders import SMRIEncoder
 
 
 class CrossEmbed2GraphByProduct(nn.Module):
@@ -87,13 +88,13 @@ class CrossGCNPredictor(nn.Module):
         self.bn3 = nn.BatchNorm1d(roi_num)
 
         # Final classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(8 * roi_num, 256),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(256, 32),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(32, 2)
-        )
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(8 * roi_num, 256),
+        #     nn.LeakyReLU(negative_slope=0.2),
+        #     nn.Linear(256, 32),
+        #     nn.LeakyReLU(negative_slope=0.2),
+        #     nn.Linear(32, 2)
+        # )
 
     def average_subnetwork_features(self, features, subnetwork_ends):
         batch_size, _, feature_dim = features.shape
@@ -160,7 +161,8 @@ class CrossGCNPredictor(nn.Module):
 
         # Classifier
         x = x.view(batch_size, -1)
-        return self.classifier(x)
+        return x
+        # return self.classifier(x)
 
 
 class Embed2GraphByLinear(nn.Module):
@@ -203,10 +205,10 @@ class Embed2GraphByLinear(nn.Module):
 
 class DHGFormer(nn.Module):
 
-    def __init__(self, model_config, roi_num=360, node_feature_dim=360, time_series_len=512):
+    def __init__(self, model_config, roi_num=360, node_feature_dim=360, time_series_len=512, smri_dim=0):
         super().__init__()
         self.graph_generation = model_config['graph_generation']
-
+        self.use_smri = model_config.get('use_smri', False) and smri_dim > 0
         # Feature extractor
         if model_config['extractor_type'] == 'transformer':
             self.feature_extractor = FCEncoder(
@@ -215,6 +217,9 @@ class DHGFormer(nn.Module):
                 embed_dim=model_config['embedding_size']
             )
 
+        if self.use_smri:
+            self.smri_encoder = SMRIEncoder(smri_dim, model_config['embedding_size'])
+            
         # Graph generator
         if self.graph_generation == "linear":
             self.graph_generator = Embed2GraphByLinear(
@@ -228,7 +233,27 @@ class DHGFormer(nn.Module):
             )
 
         self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
+        
+        self.fmri_classifier = nn.Sequential(
+            nn.Linear(8 * roi_num, 256),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(256, 32),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(32, 2)
+        )
+        
+        if self.use_smri:
+            self.final_classifier = nn.Sequential(
+                nn.Linear(8 * roi_num + 64, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5),
 
+                nn.Linear(256, 32),
+                nn.ReLU(),
+
+                nn.Linear(32, 2)
+            )
+        
         # Load node cluster mapping
         with open('./node_clus_map.pickle', 'rb') as f:
             self.node_cluster_map = pickle.load(f)
@@ -241,15 +266,18 @@ class DHGFormer(nn.Module):
         return features[:, self.cluster_order, :] if dimension == 1 else \
             features[:, self.cluster_order, :][:, :, self.cluster_order]
 
-    def forward(self, time_series: torch.Tensor, node_features: torch.Tensor):
+    def forward(self, time_series: torch.Tensor, node_features: torch.Tensor, smri_features=None):
         # Reorder inputs according to cluster mapping
         time_series = self.reorder_nodes(time_series, dimension=1)
         node_features = self.reorder_nodes(node_features, dimension=2)
 
         # Extract features and generate graph
         embeddings = self.feature_extractor(time_series, node_features)
+        # print(self.use_smri)
+        if self.use_smri and smri_features is not None:
+            smri_embed = self.smri_encoder(smri_features)          # (B, embed_dim)
+            
         embeddings = F.softmax(embeddings, dim=-1)
-
         # Generate adjacency matrices
         intra_adjacency, inter_adjacency, full_adjacency = self.graph_generator(
             embeddings, self.subnetwork_ends
@@ -265,11 +293,22 @@ class DHGFormer(nn.Module):
         edge_variance = torch.mean(torch.var(full_adjacency.reshape((batch_size, -1)), dim=1))
 
         # Make prediction
-        prediction = self.predictor(
+        fmri_embed= self.predictor(
             full_adjacency,
             intra_adjacency,
             inter_adjacency,
             node_features
         )
+        
+        
+        if self.use_smri and smri_features is not None:
+            fusion = torch.cat(
+                [fmri_embed, smri_embed],
+                dim=1
+            )
+            prediction = self.final_classifier(fusion)
+        else:
+            prediction = self.fmri_classifier(fmri_embed)
+        
 
         return prediction, full_adjacency, edge_variance

@@ -7,6 +7,9 @@ data:
   train_set: 0.7
   val_set: 0.1
   time_seires: abide.npy
+  time_series_subjects_order: subject_order.txt
+  use_smri: false
+  smri: abide_smri.csv
 
 model:
   type: DHGFormer

@@ -32,6 +32,7 @@ class BasicTrain:
         self.best_spe = 0
         self.best_f1 = 0
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
+        self.use_smri = train_config.get('use_smri', False)
 
         self.group_loss = train_config['group_loss']
 
@@ -60,16 +61,18 @@ class BasicTrain:
 
         self.model.train()
 
-        for data_in, pearson, label, _ in self.train_dataloader:
+        for data_in, pearson, label, _, smri in self.train_dataloader:
             label = label.long()
 
-            data_in, pearson, label = data_in.to(
-                device), pearson.to(device), label.to(device)
+            data_in, pearson, label, smri = data_in.to(
+                device), pearson.to(device), label.to(device), smri.to(device)
 
-            inputs, nodes, targets_a, targets_b, lam = mixup_data(
-                data_in, pearson, label, 1, device)
+            inputs, nodes, targets_a, targets_b, lam, mixed_smri = mixup_data(
+                data_in, pearson, label, 1, device,
+                smri=smri if self.use_smri else None
+                )
 
-            output, learnable_matrix, edge_variance = self.model(inputs, nodes)
+            output, learnable_matrix, edge_variance = self.model(inputs, nodes, mixed_smri)
 
             loss = 2 * mixup_criterion(
                 self.loss_fn, output, targets_a, targets_b, lam)
@@ -97,11 +100,11 @@ class BasicTrain:
 
         self.model.eval()
 
-        for data_in, pearson, label, _ in dataloader:
+        for data_in, pearson, label, _, smri in dataloader:
             label = label.long()
-            data_in, pearson, label = data_in.to(
-                device), pearson.to(device), label.to(device)
-            output, _, _ = self.model(data_in, pearson)
+            data_in, pearson, label, smri = data_in.to(
+                device), pearson.to(device), label.to(device), smri.to(device)
+            output, _, _ = self.model(data_in, pearson,smri if self.use_smri else None)
 
             loss = self.loss_fn(output, label)
             loss_meter.update_with_weight(
@@ -125,11 +128,11 @@ class BasicTrain:
 
         labels = []
 
-        for data_in, nodes, label, _ in self.test_dataloader:
+        for data_in, nodes, label, _ ,smri in self.test_dataloader:
             label = label.long()
-            data_in, nodes, label = data_in.to(
-                device), nodes.to(device), label.to(device)
-            _, learable_matrix, _ = self.model(data_in, nodes)
+            data_in, nodes, label, smri = data_in.to(
+                device), nodes.to(device), label.to(device), smri.to(device)
+            _, learable_matrix, _ = self.model(data_in, nodes, smri if self.use_smri else None)
 
             learable_matrixs.append(learable_matrix.cpu().detach().numpy())
             labels += label.tolist()
@@ -186,7 +189,6 @@ class BasicTrain:
                 self.best_f1 = test_result[-4]
                 
                 
-                  
                 
 
             self.logger.info(" | ".join([
