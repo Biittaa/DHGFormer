@@ -3,7 +3,7 @@ import numpy as np
 import random
 
 
-def mixup_data(x, nodes, y, alpha=1.0, device='cuda', smri=None):
+def mixup_data(x, nodes, y, alpha=1.0, device='cuda', smri_list=None):
     '''Returns mixed inputs, pairs of targets, and lambda'''
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
@@ -16,10 +16,12 @@ def mixup_data(x, nodes, y, alpha=1.0, device='cuda', smri=None):
     mixed_nodes = lam * nodes + (1 - lam) * nodes[index, :]
     mixed_x = lam * x + (1 - lam) * x[index, :]
     y_a, y_b = y, y[index]
-    mixed_smri = None
-    if smri is not None:
-        mixed_smri = lam * smri + (1 - lam) * smri[index, :]
-    return mixed_x, mixed_nodes, y_a, y_b, lam, mixed_smri
+    
+    mixed_smri_list = None
+    
+    if smri_list is not None:
+        mixed_smri_list = [lam * s + (1 - lam) * s[index] for s in smri_list]
+    return mixed_x, mixed_nodes, y_a, y_b, lam, mixed_smri_list
 
 
 def mixup_data_by_class(x, nodes, y, alpha=1.0, device='cuda'):

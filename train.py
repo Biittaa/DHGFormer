@@ -61,19 +61,19 @@ class BasicTrain:
 
         self.model.train()
 
-        for data_in, pearson, label, _, smri in self.train_dataloader:
+        for data_in, pearson, label, _, smri_aseg, smri_destrieux, smri_wmparc in self.train_dataloader:
             label = label.long()
 
-            data_in, pearson, label, smri = data_in.to(
-                device), pearson.to(device), label.to(device), smri.to(device)
+            data_in, pearson, label, smri_aseg, smri_destrieux, smri_wmparc = data_in.to(
+                device), pearson.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device)
 
             inputs, nodes, targets_a, targets_b, lam, mixed_smri = mixup_data(
                 data_in, pearson, label, 1, device,
-                smri=smri if self.use_smri else None
+                smri_list=[smri_aseg, smri_destrieux, smri_wmparc] if self.use_smri else None
                 )
 
-            output, learnable_matrix, edge_variance = self.model(inputs, nodes, mixed_smri)
-
+            output, learnable_matrix, edge_variance = self.model(inputs, nodes, (mixed_smri))
+            
             loss = 2 * mixup_criterion(
                 self.loss_fn, output, targets_a, targets_b, lam)
 
@@ -100,11 +100,18 @@ class BasicTrain:
 
         self.model.eval()
 
-        for data_in, pearson, label, _, smri in dataloader:
+        for data_in, pearson, label, _, smri_aseg, smri_destrieux, smri_wmparc in dataloader:
             label = label.long()
-            data_in, pearson, label, smri = data_in.to(
-                device), pearson.to(device), label.to(device), smri.to(device)
-            output, _, _ = self.model(data_in, pearson,smri if self.use_smri else None)
+            data_in, pearson, label, smri_aseg, smri_destrieux, smri_wmparc = data_in.to(
+                device), pearson.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device)
+            
+            
+            smri_input = (
+                [smri_aseg, smri_destrieux, smri_wmparc]
+                if self.use_smri else None
+            )
+            
+            output, _, _ = self.model(data_in, pearson,smri_input if self.use_smri else None)
 
             loss = self.loss_fn(output, label)
             loss_meter.update_with_weight(
@@ -128,11 +135,17 @@ class BasicTrain:
 
         labels = []
 
-        for data_in, nodes, label, _ ,smri in self.test_dataloader:
+        for data_in, nodes, label, _ ,smri_aseg, smri_destrieux, smri_wmparc in self.test_dataloader:
             label = label.long()
-            data_in, nodes, label, smri = data_in.to(
-                device), nodes.to(device), label.to(device), smri.to(device)
-            _, learable_matrix, _ = self.model(data_in, nodes, smri if self.use_smri else None)
+            data_in, nodes, label, smri_aseg, smri_destrieux, smri_wmparc = data_in.to(
+                device), nodes.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device)
+            
+            smri_input = (
+                [smri_aseg, smri_destrieux, smri_wmparc]
+                if self.use_smri else None
+            )
+            
+            _, learable_matrix, _ = self.model(data_in, nodes, smri_input if self.use_smri else None)
 
             learable_matrixs.append(learable_matrix.cpu().detach().numpy())
             labels += label.tolist()

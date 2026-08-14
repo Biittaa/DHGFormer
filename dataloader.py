@@ -11,6 +11,126 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from nilearn import plotting, datasets
 import random
+from collections import OrderedDict
+
+
+
+DESTRIEUX_METRICS = ['CurvInd', 'FoldInd', 'GausCurv', 'GrayVol', 'MeanCurv',
+                     'NumVert', 'SurfArea', 'ThickAvg', 'ThickStd']
+SEGSTATS_METRICS = ['NVoxels', 'Volume_mm3', 'normMax', 'normMean',
+                    'normMin', 'normRange', 'normStdDev']
+ALL_METRIC_SUFFIXES = DESTRIEUX_METRICS + SEGSTATS_METRICS
+
+def get_view_from_column(col):
+    if col.startswith('aseg_'):
+        return 'aseg'
+    if col.startswith('wmparc_'):
+        return 'wmparc'
+    if col.startswith('lh_') or col.startswith('rh_'):
+        return 'destrieux'
+    return None
+
+
+def parse_region_columns_by_view(cols):
+    """
+    Groups columns into:
+        view -> region_name -> [(metric_name, column_index), ...]
+
+    Whole-brain aseg_Measure_* columns are skipped.
+    """
+    views = OrderedDict([
+        ('aseg', OrderedDict()),
+        ('destrieux', OrderedDict()),
+        ('wmparc', OrderedDict())
+    ])
+
+    for idx, col in enumerate(cols):
+        view = get_view_from_column(col)
+        if view is None or '_Measure_' in col:
+            continue
+
+        matched_metric = None
+        for metric in ALL_METRIC_SUFFIXES:
+            if col.endswith('_' + metric):
+                matched_metric = metric
+                break
+
+        if matched_metric is None:
+            continue
+
+        region_name = col[:-len(matched_metric)-1]
+        views[view].setdefault(region_name, []).append((matched_metric, idx))
+
+    return views
+
+
+def build_region_node_features(feature_matrix, region_to_cols, region_names, node_feature_dim):
+    """
+    Returns:
+        (num_subjects, num_regions, node_feature_dim)
+    """
+    num_subjects = feature_matrix.shape[0]
+    num_regions = len(region_names)
+    out = np.zeros((num_subjects, num_regions, node_feature_dim), dtype=np.float32)
+
+    for r, region_name in enumerate(region_names):
+        for m, (_, col_idx) in enumerate(region_to_cols[region_name]):
+            out[:, r, m] = feature_matrix[:, col_idx]
+
+    return out
+
+
+
+
+def build_smri_multiview_tensor(dataset_config, num_subjects):
+    order_map = load_subject_order(dataset_config['time_series_subjects_order'])
+
+    df = pd.read_csv(dataset_config['smri'])
+    def to_numeric_id(raw_id):
+        return str(int(str(raw_id).split('_')[-1]))
+    df['subject_num'] = df['subject_id'].apply(to_numeric_id)
+
+    feature_cols = [c for c in df.columns if c not in ('subject_id', 'subject_num')]
+    feat_df = df[feature_cols].apply(pd.to_numeric, errors='coerce')
+    feat_df = feat_df.fillna(feat_df.mean()).fillna(0.0)
+
+    mean = feat_df.mean(axis=0).values
+    std = feat_df.std(axis=0).values
+    std[std == 0] = 1.0
+    normed = (feat_df.values - mean) / std   # (num_csv_subjects, num_features)
+
+    view_region_to_cols = parse_region_columns_by_view(feature_cols)
+    view_region_names = {v: list(view_region_to_cols[v].keys()) for v in view_region_to_cols}
+    view_node_feature_dim = {
+        v: max(len(x) for x in view_region_to_cols[v].values()) for v in view_region_to_cols
+    }
+
+    all_view_feats_csv = {
+        v: build_region_node_features(normed, view_region_to_cols[v], view_region_names[v], view_node_feature_dim[v])
+        for v in ['aseg', 'destrieux', 'wmparc']
+    }
+
+    subject_to_row = {sid: i for i, sid in enumerate(df['subject_num'].values)}
+
+    view_tensors = {}
+    for v in ['aseg', 'destrieux', 'wmparc']:
+        n_nodes = len(view_region_names[v])
+        dim = view_node_feature_dim[v]
+        mat = np.zeros((num_subjects, n_nodes, dim), dtype=np.float32)
+        missing = 0
+        for i in range(num_subjects):
+            subj = order_map.get(i)
+            if subj is not None and subj in subject_to_row:
+                mat[i] = all_view_feats_csv[v][subject_to_row[subj]]
+            else:
+                missing += 1
+        if missing > 0:
+            print(f'[sMRI-{v}] Warning: missing for {missing}/{num_subjects} subjects.')
+        view_tensors[v] = torch.from_numpy(mat).float()
+
+    num_nodes_by_view = {v: len(view_region_names[v]) for v in view_region_names}
+    return view_tensors, view_node_feature_dim, num_nodes_by_view
+
 
 class StandardScaler:
     """
@@ -118,11 +238,20 @@ def init_dataloader(dataset_config):
     length = final_fc.shape[0]
     
     use_smri = dataset_config.get('use_smri', False)
-    if use_smri:
+    smri_encoder_type = dataset_config.get('smri_encoder', 'mlp')
+    smri_meta = {}
+    
+    if use_smri and smri_encoder_type == 'gcn':
+        view_tensors, view_node_feature_dim, num_nodes_by_view = build_smri_multiview_tensor(dataset_config, length)
+        smri_aseg, smri_destrieux, smri_wmparc = view_tensors['aseg'], view_tensors['destrieux'], view_tensors['wmparc']
+        smri_meta = dict(in_c_by_view=view_node_feature_dim, num_nodes_by_view=num_nodes_by_view)
+    elif use_smri:
         smri_tensor, smri_size = build_smri_tensor(dataset_config, length)
+        smri_aseg = smri_destrieux = smri_wmparc = torch.zeros((length, 1), dtype=torch.float32)
     else:
         smri_tensor = torch.zeros((length, 1), dtype=torch.float32)
         smri_size = 0
+        smri_aseg = smri_destrieux = smri_wmparc = torch.zeros((length, 1), dtype=torch.float32)
     
     train_length = int(length*dataset_config["train_set"])
     val_length = int(length*dataset_config["val_set"])
@@ -133,7 +262,7 @@ def init_dataloader(dataset_config):
         final_pearson,
         labels,
         pseudo_arr,
-        smri_tensor
+        smri_aseg, smri_destrieux, smri_wmparc
     )
 
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
@@ -149,4 +278,4 @@ def init_dataloader(dataset_config):
         test_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
 
     
-    return (train_dataloader, val_dataloader, test_dataloader), node_size, node_feature_size, timeseries, smri_size
+    return (train_dataloader, val_dataloader, test_dataloader), node_size, node_feature_size, timeseries, smri_meta

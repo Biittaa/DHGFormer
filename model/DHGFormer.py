@@ -7,7 +7,7 @@ from torch.nn import Linear
 import math
 from model.Encoder import FCEncoder
 import pickle
-from model.smriEncoders import SMRIEncoder
+from model.smriEncoders import SMRIEncoder, MultiViewSMRIEncoder
 
 
 class CrossEmbed2GraphByProduct(nn.Module):
@@ -163,6 +163,340 @@ class CrossGCNPredictor(nn.Module):
         x = x.view(batch_size, -1)
         return x
         # return self.classifier(x)
+        
+                
+class CrossGINPredictor(nn.Module):
+    
+    def __init__(self, node_input_dim, roi_num=360):
+        super().__init__()
+
+        self.roi_num = roi_num
+        self.subnetwork_ends = [
+            41, 70, 91, 110,
+            130, 137, 158, 200
+        ]
+
+        # =========================
+        # GIN Layers
+        # =========================
+
+        self.gin1 = GINLayer(
+            input_dim=node_input_dim,
+            output_dim=roi_num,
+            hidden_dim=roi_num
+        )
+
+        self.bn1 = nn.BatchNorm1d(roi_num)
+
+
+        self.gin2 = GINLayer(
+            input_dim=roi_num,
+            output_dim=roi_num,
+            hidden_dim=roi_num
+        )
+
+        self.bn2 = nn.BatchNorm1d(roi_num)
+
+
+        self.gin3 = GINLayer(
+            input_dim=roi_num,
+            output_dim=8,
+            hidden_dim=64
+        )
+
+        self.bn3 = nn.BatchNorm1d(8)
+
+
+    def average_subnetwork_features(
+        self,
+        features,
+        subnetwork_ends
+    ):
+
+        batch_size, _, feature_dim = features.shape
+
+        num_subnetworks = len(subnetwork_ends)
+
+        subnetwork_starts = (
+            [0] + subnetwork_ends[:-1]
+        )
+
+        subnetwork_features = torch.zeros(
+            (
+                batch_size,
+                num_subnetworks,
+                feature_dim
+            ),
+            device=features.device
+        )
+
+        for i in range(num_subnetworks):
+
+            start_idx = subnetwork_starts[i]
+            end_idx = subnetwork_ends[i]
+
+            region_features = features[
+                :,
+                start_idx:end_idx,
+                :
+            ]
+
+            subnetwork_features[:, i, :] = (
+                region_features.mean(dim=1)
+            )
+
+        return subnetwork_features
+
+
+    def propagate_subnetwork_features(
+        self,
+        subnetwork_features,
+        node_features,
+        subnetwork_ends
+    ):
+
+        subnetwork_starts = (
+            [0] + subnetwork_ends[:-1]
+        )
+
+        num_subnetworks = len(
+            subnetwork_ends
+        )
+
+        propagated_features = torch.zeros_like(
+            node_features
+        )
+
+        for i in range(num_subnetworks):
+
+            start_idx = subnetwork_starts[i]
+            end_idx = subnetwork_ends[i]
+
+            expanded_features = (
+                subnetwork_features[:, i, :]
+                .unsqueeze(1)
+                .expand(
+                    -1,
+                    end_idx - start_idx,
+                    -1
+                )
+            )
+
+            propagated_features[
+                :,
+                start_idx:end_idx,
+                :
+            ] = expanded_features
+
+        return propagated_features
+
+
+    def forward(
+        self,
+        adjacency_matrix,
+        intra_adjacency,
+        inter_adjacency,
+        node_features
+    ):
+
+        batch_size = node_features.shape[0]
+
+
+        # ==================================
+        # First GIN layer
+        # ==================================
+
+        # Sum neighbor features داخل هر subnetwork
+        intra_features = torch.bmm(
+            intra_adjacency,
+            node_features
+        )
+
+
+        # Pool each subnetwork
+        subnetwork_features = (
+            self.average_subnetwork_features(
+                node_features,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # Message passing بین subnetworks
+        subnetwork_features = torch.bmm(
+            inter_adjacency,
+            subnetwork_features
+        )
+
+
+        # Broadcast subnetwork messages
+        inter_features = (
+            self.propagate_subnetwork_features(
+                subnetwork_features,
+                node_features,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # Combine intra + inter neighbor messages
+        aggregated_features = (
+            intra_features + inter_features
+        )
+
+
+        # Real GIN update
+        x = self.gin1(
+            node_features,
+            aggregated_features
+        )
+
+
+        x = x.reshape(
+            batch_size * self.roi_num,
+            -1
+        )
+
+        x = self.bn1(x)
+
+        x = x.reshape(
+            batch_size,
+            self.roi_num,
+            -1
+        )
+
+
+        # ==================================
+        # Second GIN layer
+        # ==================================
+
+        previous_x = x
+
+        intra_features = torch.bmm(
+            intra_adjacency,
+            x
+        )
+
+
+        subnetwork_features = (
+            self.average_subnetwork_features(
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        subnetwork_features = torch.bmm(
+            inter_adjacency,
+            subnetwork_features
+        )
+
+
+        inter_features = (
+            self.propagate_subnetwork_features(
+                subnetwork_features,
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        aggregated_features = (
+            intra_features + inter_features
+        )
+
+
+        x = self.gin2(
+            previous_x,
+            aggregated_features
+        )
+
+
+        x = x.reshape(
+            batch_size * self.roi_num,
+            -1
+        )
+
+        x = self.bn2(x)
+
+        x = x.reshape(
+            batch_size,
+            self.roi_num,
+            -1
+        )
+
+
+        # ==================================
+        # Third GIN layer
+        # ==================================
+
+        previous_x = x
+
+        intra_features = torch.bmm(
+            intra_adjacency,
+            x
+        )
+
+
+        subnetwork_features = (
+            self.average_subnetwork_features(
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        subnetwork_features = torch.bmm(
+            inter_adjacency,
+            subnetwork_features
+        )
+
+
+        inter_features = (
+            self.propagate_subnetwork_features(
+                subnetwork_features,
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        aggregated_features = (
+            intra_features + inter_features
+        )
+
+
+        x = self.gin3(
+            previous_x,
+            aggregated_features
+        )
+
+
+        # BatchNorm درست برای feature_dim = 8
+        x = x.reshape(
+            batch_size * self.roi_num,
+            -1
+        )
+
+        x = self.bn3(x)
+
+        x = x.reshape(
+            batch_size,
+            self.roi_num,
+            -1
+        )
+
+
+        # ==================================
+        # Output
+        # ==================================
+
+        x = x.reshape(
+            batch_size,
+            -1
+        )
+
+        return x        
 
 
 class Embed2GraphByLinear(nn.Module):
@@ -205,10 +539,10 @@ class Embed2GraphByLinear(nn.Module):
 
 class DHGFormer(nn.Module):
 
-    def __init__(self, model_config, roi_num=360, node_feature_dim=360, time_series_len=512, smri_dim=0):
+    def __init__(self, model_config, roi_num=360, node_feature_dim=360, time_series_len=512):
         super().__init__()
         self.graph_generation = model_config['graph_generation']
-        self.use_smri = model_config.get('use_smri', False) and smri_dim > 0
+        self.use_smri = model_config.get('use_smri', False)
         # Feature extractor
         if model_config['extractor_type'] == 'transformer':
             self.feature_extractor = FCEncoder(
@@ -218,7 +552,13 @@ class DHGFormer(nn.Module):
             )
 
         if self.use_smri:
-            self.smri_encoder = SMRIEncoder(smri_dim, model_config['embedding_size'])
+            smri_meta = model_config['smri_meta']
+            # self.smri_encoder = SMRIEncoder(smri_dim, model_config['embedding_size'])
+            self.smri_encoder = MultiViewSMRIEncoder(
+                in_c_by_view=smri_meta['in_c_by_view'],
+                num_nodes_by_view=smri_meta['num_nodes_by_view'],
+                hid_c=64
+            )
             
         # Graph generator
         if self.graph_generation == "linear":
@@ -275,7 +615,8 @@ class DHGFormer(nn.Module):
         embeddings = self.feature_extractor(time_series, node_features)
         # print(self.use_smri)
         if self.use_smri and smri_features is not None:
-            smri_embed = self.smri_encoder(smri_features)          # (B, embed_dim)
+            x_aseg, x_destrieux, x_wmparc = smri_features
+            smri_embed = self.smri_encoder(x_aseg, x_destrieux, x_wmparc)        # (B, embed_dim)
             
         embeddings = F.softmax(embeddings, dim=-1)
         # Generate adjacency matrices
