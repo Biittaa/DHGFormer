@@ -6,10 +6,13 @@ data:
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  time_seires: abide.npy
-  time_series_subjects_order: subject_order.txt
+  # time_seires: abide.npy
+  time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
+  # time_series_subjects_order: subject_order.txt
+  time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   use_smri: false
-  smri: abide_smri.csv
+  # smri: abide_smri.csv
+  smri: /content/drive/MyDrive/DHGFormer/abide_smri.csv
 
 model:
   type: DHGFormer
