@@ -579,6 +579,7 @@ class DHGFormer(nn.Module):
         super().__init__()
         self.graph_generation = model_config['graph_generation']
         self.use_smri = model_config.get('use_smri', False)
+        self.fusion_method = model_config['fusion_method']
         # Feature extractor
         if model_config['extractor_type'] == 'transformer':
             self.feature_extractor = FCEncoder(
@@ -625,25 +626,50 @@ class DHGFormer(nn.Module):
         elif model_config['message_passing_type'] == "GAT":
             self.predictor = CrossGATPredictor(node_feature_dim, roi_num=roi_num)    
         
-        self.fmri_classifier = nn.Sequential(
-            nn.Linear(8 * roi_num, 256),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(256, 32),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(32, 2)
-        )
+        
         
         if self.use_smri:
-            self.final_classifier = nn.Sequential(
-                nn.Linear(8 * roi_num + 64, 256),
-                nn.ReLU(),
-                nn.Dropout(0.5),
+            if self.fusion_method == 'concat':
+                self.final_classifier = nn.Sequential(
+                    nn.Linear(8 * roi_num + 64, 256),
+                    nn.ReLU(),
+                    nn.Dropout(0.5),
 
-                nn.Linear(256, 32),
-                nn.ReLU(),
+                    nn.Linear(256, 32),
+                    nn.ReLU(),
 
-                nn.Linear(32, 2)
-            )
+                    nn.Linear(32, 2)
+                )
+            elif self.fusion_method == 'attention':
+                attn_dim = 128
+                self.fmri_proj = nn.Linear(8 * roi_num, attn_dim)
+                self.smri_proj = nn.Linear(64, attn_dim)
+                self.cross_attention = nn.MultiheadAttention(
+                    embed_dim=attn_dim,
+                    num_heads=4,
+                    batch_first=True
+                )
+                self.final_classifier = nn.Sequential(
+                    nn.Linear(attn_dim, 256),
+                    nn.ReLU(),
+                    nn.Dropout(0.5),
+
+                    nn.Linear(256, 32),
+                    nn.ReLU(),
+
+                    nn.Linear(32, 2)
+                )
+            else:
+                self.fmri_classifier = nn.Sequential(
+                    nn.Linear(8 * roi_num, 256),
+                    nn.LeakyReLU(negative_slope=0.2),
+                    nn.Linear(256, 32),
+                    nn.LeakyReLU(negative_slope=0.2),
+                    nn.Linear(32, 2)
+                )
+
+                
+
         
         # Load node cluster mapping
         with open('./node_clus_map.pickle', 'rb') as f:
@@ -699,20 +725,34 @@ class DHGFormer(nn.Module):
         
         
         if self.use_smri and smri_features is not None:
-            fusion = torch.cat(
-                [fmri_embed, smri_embed],
-                dim=1
-            )
-            prediction = self.final_classifier(fusion)
-        else:
-            prediction = self.fmri_classifier(fmri_embed)
-        
+            if self.fusion_method == 'concat':
+                fusion = torch.cat(
+                    [fmri_embed, smri_embed],
+                    dim=1
+                )
+                prediction = self.final_classifier(fusion)
+            elif self.fusion_method == 'attention':
+                # [B, D] -> [B, 1, D]
+                # fmri_token = fmri_embed.unsqueeze(1)
+                # smri_token = smri_embed.unsqueeze(1)
+                fmri_token = self.fmri_proj(fmri_embed).unsqueeze(1)   # [B, 1, attn_dim]
+                smri_token = self.smri_proj(smri_embed).unsqueeze(1)   # [B, 1, attn_dim]
+
+                # fMRI attends to sMRI
+                attn_output, attn_weights = self.cross_attention(
+                    query=fmri_token,
+                    key=smri_token,
+                    value=smri_token
+                )
+
+                fusion = attn_output.squeeze(1)   # [B, attn_dim]
+
+                prediction = self.final_classifier(fusion)
+            else:
+                prediction = self.fmri_classifier(fmri_embed)
+            
 
         return prediction, full_adjacency, edge_variance
-    
-    
-    
-    
     
     
     
