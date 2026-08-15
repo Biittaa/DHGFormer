@@ -90,6 +90,8 @@ def build_smri_multiview_tensor(dataset_config, num_subjects):
         return str(int(str(raw_id).split('_')[-1]))
     df['subject_num'] = df['subject_id'].apply(to_numeric_id)
 
+    df = df.sort_values('subject_num').reset_index(drop=True)
+    
     feature_cols = [c for c in df.columns if c not in ('subject_id', 'subject_num')]
     feat_df = df[feature_cols].apply(pd.to_numeric, errors='coerce')
     feat_df = feat_df.fillna(feat_df.mean()).fillna(0.0)
@@ -161,7 +163,8 @@ def load_subject_order(order_path):
             idx = int(parts[0])
             subj = str(int(parts[1]))
             order_map[idx] = subj
-    return order_map
+    return dict(sorted(order_map.items()))        
+    # return order_map
 
 def load_smri_features(smri_path):
     df = pd.read_csv(smri_path)
@@ -244,14 +247,26 @@ def init_dataloader(dataset_config):
     if use_smri and smri_encoder_type == 'gcn':
         view_tensors, view_node_feature_dim, num_nodes_by_view = build_smri_multiview_tensor(dataset_config, length)
         smri_aseg, smri_destrieux, smri_wmparc = view_tensors['aseg'], view_tensors['destrieux'], view_tensors['wmparc']
-        smri_meta = dict(in_c_by_view=view_node_feature_dim, num_nodes_by_view=num_nodes_by_view)
-    elif use_smri:
+        # smri_meta = dict(in_c_by_view=view_node_feature_dim, num_nodes_by_view=num_nodes_by_view)
+        smri_tensor = torch.zeros((length, 1), dtype=torch.float32)
+        smri_meta = {
+            'encoder_type': 'gcn',
+            'in_c_by_view': view_node_feature_dim,
+            'num_nodes_by_view': num_nodes_by_view
+        }
+    elif use_smri and smri_encoder_type == 'mlp':
         smri_tensor, smri_size = build_smri_tensor(dataset_config, length)
         smri_aseg = smri_destrieux = smri_wmparc = torch.zeros((length, 1), dtype=torch.float32)
+        smri_meta = {
+            'encoder_type': 'mlp',
+            'smri_dim': smri_size
+        }
     else:
         smri_tensor = torch.zeros((length, 1), dtype=torch.float32)
-        smri_size = 0
         smri_aseg = smri_destrieux = smri_wmparc = torch.zeros((length, 1), dtype=torch.float32)
+        smri_meta = {
+            'encoder_type': None
+        }
     
     train_length = int(length*dataset_config["train_set"])
     val_length = int(length*dataset_config["val_set"])
@@ -262,7 +277,7 @@ def init_dataloader(dataset_config):
         final_pearson,
         labels,
         pseudo_arr,
-        smri_aseg, smri_destrieux, smri_wmparc
+        smri_aseg, smri_destrieux, smri_wmparc, smri_tensor
     )
 
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(

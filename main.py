@@ -52,7 +52,7 @@ def main(args, current_seed):
             f"{config['data']['dataset']}_{config['data']['atlas']}")
 
         train_process = use_train(
-            config['train'], model, opts, dataloaders, save_folder_name)
+            config, model, opts, dataloaders, save_folder_name)
 
         return train_process.train()
 
@@ -65,7 +65,8 @@ if __name__ == '__main__':
     parser.add_argument('--device', default=4, type=int)
     args = parser.parse_args()
     torch.cuda.set_device(args.device)
-
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
     seed = args.seed
     random.seed(seed)
     np.random.seed(seed)

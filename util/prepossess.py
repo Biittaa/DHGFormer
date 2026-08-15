@@ -3,25 +3,99 @@ import numpy as np
 import random
 
 
-def mixup_data(x, nodes, y, alpha=1.0, device='cuda', smri_list=None):
-    '''Returns mixed inputs, pairs of targets, and lambda'''
+# def mixup_data(x, nodes, y, alpha=1.0, device='cuda', smri_list=None):
+#     '''Returns mixed inputs, pairs of targets, and lambda'''
+#     if alpha > 0:
+#         lam = np.random.beta(alpha, alpha)
+#     else:
+#         lam = 1
+
+#     batch_size = x.size()[0]
+#     index = torch.randperm(batch_size).to(device)
+
+#     mixed_nodes = lam * nodes + (1 - lam) * nodes[index, :]
+#     mixed_x = lam * x + (1 - lam) * x[index, :]
+#     y_a, y_b = y, y[index]
+    
+#     mixed_smri_list = None
+    
+#     if smri_list is not None:
+#         mixed_smri_list = [lam * s + (1 - lam) * s[index] for s in smri_list]
+#     return mixed_x, mixed_nodes, y_a, y_b, lam, mixed_smri_list
+
+def mixup_data(
+    x,
+    y,
+    labels,
+    alpha,
+    device,
+    smri_data=None
+):
+
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
         lam = 1
 
-    batch_size = x.size()[0]
-    index = torch.randperm(batch_size).to(device)
+    batch_size = x.size(0)
 
-    mixed_nodes = lam * nodes + (1 - lam) * nodes[index, :]
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-    y_a, y_b = y, y[index]
-    
-    mixed_smri_list = None
-    
-    if smri_list is not None:
-        mixed_smri_list = [lam * s + (1 - lam) * s[index] for s in smri_list]
-    return mixed_x, mixed_nodes, y_a, y_b, lam, mixed_smri_list
+    index = torch.randperm(
+        batch_size
+    ).to(device)
+
+    mixed_x = (
+        lam * x
+        + (1 - lam) * x[index]
+    )
+
+    mixed_y = (
+        lam * y
+        + (1 - lam) * y[index]
+    )
+
+    mixed_smri = None
+
+    if smri_data is not None:
+
+        # GCN: list of tensors
+        if isinstance(smri_data, (list, tuple)):
+
+            mixed_smri = [
+                lam * s + (1 - lam) * s[index]
+                for s in smri_data
+            ]
+
+        # MLP: single tensor
+        else:
+
+            mixed_smri = (
+                lam * smri_data
+                + (1 - lam) * smri_data[index]
+            )
+
+    y_a = labels
+    y_b = labels[index]
+
+    return (
+        mixed_x,
+        mixed_y,
+        y_a,
+        y_b,
+        lam,
+        mixed_smri
+    )
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def mixup_data_by_class(x, nodes, y, alpha=1.0, device='cuda'):

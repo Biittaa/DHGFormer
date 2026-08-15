@@ -21,7 +21,7 @@ class BasicTrain:
         self.logger = Logger()
         self.model = model.to(device)
         self.train_dataloader, self.val_dataloader, self.test_dataloader = dataloaders
-        self.epochs = train_config['epochs']
+        self.epochs = train_config['train']['epochs']
         self.optimizers = optimizers
         self.best_acc = 0
         self.best_model = None
@@ -32,12 +32,12 @@ class BasicTrain:
         self.best_spe = 0
         self.best_f1 = 0
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
-        self.use_smri = train_config.get('use_smri', False)
+        self.use_smri = train_config['train'].get('use_smri', False)
 
-        self.group_loss = train_config['group_loss']
-
-        self.sparsity_loss = train_config['sparsity_loss']
-        self.sparsity_loss_weight = train_config['sparsity_loss_weight']
+        self.group_loss = train_config['train']['group_loss']
+        self.train_config = train_config
+        self.sparsity_loss = train_config['train']['sparsity_loss']
+        self.sparsity_loss_weight = train_config['train']['sparsity_loss_weight']
         self.save_path = log_folder
 
         self.save_learnable_graph = True
@@ -61,17 +61,48 @@ class BasicTrain:
 
         self.model.train()
 
-        for data_in, pearson, label, _, smri_aseg, smri_destrieux, smri_wmparc in self.train_dataloader:
+        for data_in, pearson, label, _, smri_aseg, smri_destrieux, smri_wmparc, smri_tensor in self.train_dataloader:
             label = label.long()
 
             data_in, pearson, label, smri_aseg, smri_destrieux, smri_wmparc = data_in.to(
                 device), pearson.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device)
+            smri_tensor = smri_tensor.to(device)
+            smri_encoder_type = self.train_config['data'].get(
+                'smri_encoder',
+                'mlp'
+            )
+            # inputs, nodes, targets_a, targets_b, lam, mixed_smri = mixup_data(
+            #     data_in, pearson, label, 1, device,
+            #     smri_list=[smri_aseg, smri_destrieux, smri_wmparc] if self.use_smri else None
+            #     )
 
-            inputs, nodes, targets_a, targets_b, lam, mixed_smri = mixup_data(
-                data_in, pearson, label, 1, device,
-                smri_list=[smri_aseg, smri_destrieux, smri_wmparc] if self.use_smri else None
+            if self.use_smri:
+    
+                if smri_encoder_type == 'gcn':
+
+                    smri_for_mixup = [
+                        smri_aseg,
+                        smri_destrieux,
+                        smri_wmparc
+                    ]
+
+                elif smri_encoder_type == 'mlp':
+
+                    smri_for_mixup = smri_tensor
+
+            else:
+
+                smri_for_mixup = None
+            
+            inputs, nodes, targets_a, targets_b, lam, mixed_smri = \
+                mixup_data(
+                    data_in,
+                    pearson,
+                    label,
+                    1,
+                    device,
+                    smri_data=smri_for_mixup
                 )
-
             output, learnable_matrix, edge_variance = self.model(inputs, nodes, (mixed_smri))
             
             loss = 2 * mixup_criterion(
@@ -100,18 +131,24 @@ class BasicTrain:
 
         self.model.eval()
 
-        for data_in, pearson, label, _, smri_aseg, smri_destrieux, smri_wmparc in dataloader:
+        for data_in, pearson, label, _, smri_aseg, smri_destrieux, smri_wmparc,smri_tensor in dataloader:
             label = label.long()
-            data_in, pearson, label, smri_aseg, smri_destrieux, smri_wmparc = data_in.to(
-                device), pearson.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device)
-            
-            
-            smri_input = (
-                [smri_aseg, smri_destrieux, smri_wmparc]
-                if self.use_smri else None
-            )
-            
-            output, _, _ = self.model(data_in, pearson,smri_input if self.use_smri else None)
+            data_in, pearson, label, smri_aseg, smri_destrieux, smri_wmparc, smri_tensor = data_in.to(
+                device), pearson.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device), smri_tensor.to(device)
+            if not self.use_smri:
+    
+                smri_input = None
+            elif self.train_config['data']['smri_encoder'] == 'gcn':
+                smri_input = [smri_aseg, smri_destrieux, smri_wmparc]
+                
+            elif self.train_config['data']['smri_encoder'] == 'mlp':
+                smri_input = smri_tensor   
+            else:
+                raise ValueError(
+                    "Unknown sMRI encoder type"
+                )
+                        
+            output, _, _ = self.model(data_in, pearson,smri_input)
 
             loss = self.loss_fn(output, label)
             loss_meter.update_with_weight(
@@ -135,17 +172,35 @@ class BasicTrain:
 
         labels = []
 
-        for data_in, nodes, label, _ ,smri_aseg, smri_destrieux, smri_wmparc in self.test_dataloader:
+        for data_in, nodes, label, _ ,smri_aseg, smri_destrieux, smri_wmparc, smri_tensor in self.test_dataloader:
             label = label.long()
             data_in, nodes, label, smri_aseg, smri_destrieux, smri_wmparc = data_in.to(
                 device), nodes.to(device), label.to(device), smri_aseg.to(device), smri_destrieux.to(device), smri_wmparc.to(device)
+            smri_tensor = smri_tensor.to(device)
+            # smri_input = (
+            #     [smri_aseg, smri_destrieux, smri_wmparc]
+            #     if self.use_smri else None
+            # )
             
-            smri_input = (
-                [smri_aseg, smri_destrieux, smri_wmparc]
-                if self.use_smri else None
-            )
+            if not self.use_smri:
+    
+                smri_input = None
+
+            elif self.train_config['data']['smri_encoder'] == 'gcn':
+
+                smri_input = [
+                    smri_aseg,
+                    smri_destrieux,
+                    smri_wmparc
+                ]
+
+            elif self.train_config['data']['smri_encoder'] == 'mlp':
+
+                smri_input = smri_tensor
             
-            _, learable_matrix, _ = self.model(data_in, nodes, smri_input if self.use_smri else None)
+            
+            
+            _, learable_matrix, _ = self.model(data_in, nodes, smri_input)
 
             learable_matrixs.append(learable_matrix.cpu().detach().numpy())
             labels += label.tolist()
@@ -238,4 +293,5 @@ class BasicTrain:
             'spe': self.best_spe,
             'f1': self.best_f1,
         }
+        
         

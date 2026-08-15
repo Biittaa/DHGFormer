@@ -163,6 +163,42 @@ class CrossGCNPredictor(nn.Module):
         x = x.view(batch_size, -1)
         return x
         # return self.classifier(x)
+ 
+class GINLayer(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim=None):
+        super().__init__()
+
+        if hidden_dim is None:
+            hidden_dim = output_dim
+
+        # learnable epsilon
+        self.eps = nn.Parameter(torch.zeros(1))
+
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(hidden_dim, output_dim),
+            nn.LeakyReLU(negative_slope=0.2)
+        )
+
+    def forward(self, x, aggregated_features):
+        """
+        x:                  [B, N, F]
+        aggregated_features:[B, N, F]
+        """
+
+        # GIN update rule:
+        # (1 + eps) * h_i + sum(neighbor features)
+
+        out = (1 + self.eps) * x + aggregated_features
+
+        return self.mlp(out) 
+ 
+ 
+ 
+ 
+ 
+ 
         
                 
 class CrossGINPredictor(nn.Module):
@@ -553,12 +589,23 @@ class DHGFormer(nn.Module):
 
         if self.use_smri:
             smri_meta = model_config['smri_meta']
+            self.smri_encoder_type = smri_meta['encoder_type']
             # self.smri_encoder = SMRIEncoder(smri_dim, model_config['embedding_size'])
-            self.smri_encoder = MultiViewSMRIEncoder(
-                in_c_by_view=smri_meta['in_c_by_view'],
-                num_nodes_by_view=smri_meta['num_nodes_by_view'],
-                hid_c=64
-            )
+            if self.smri_encoder_type == 'gcn':
+                self.smri_encoder = MultiViewSMRIEncoder(
+                    in_c_by_view=smri_meta['in_c_by_view'],
+                    num_nodes_by_view=smri_meta['num_nodes_by_view'],
+                    hid_c=64
+                )
+            elif self.smri_encoder_type == 'mlp':
+                self.smri_encoder = SMRIEncoder(
+                    smri_dim=smri_meta['smri_dim'],
+                    embed_dim=64
+                )
+            else:
+                raise ValueError(
+                    f"Unknown sMRI encoder type: {self.smri_encoder_type}"
+                )    
             
         # Graph generator
         if self.graph_generation == "linear":
@@ -571,8 +618,12 @@ class DHGFormer(nn.Module):
                 model_config['embedding_size'],
                 roi_num=roi_num
             )
-
-        self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
+        if model_config['message_passing_type'] == "GCN":
+            self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
+        elif model_config['message_passing_type'] == "GIN":
+            self.predictor = CrossGINPredictor(node_feature_dim, roi_num=roi_num)  
+        elif model_config['message_passing_type'] == "GAT":
+            self.predictor = CrossGATPredictor(node_feature_dim, roi_num=roi_num)    
         
         self.fmri_classifier = nn.Sequential(
             nn.Linear(8 * roi_num, 256),
@@ -615,8 +666,13 @@ class DHGFormer(nn.Module):
         embeddings = self.feature_extractor(time_series, node_features)
         # print(self.use_smri)
         if self.use_smri and smri_features is not None:
-            x_aseg, x_destrieux, x_wmparc = smri_features
-            smri_embed = self.smri_encoder(x_aseg, x_destrieux, x_wmparc)        # (B, embed_dim)
+            if self.smri_encoder_type == 'gcn':
+                x_aseg, x_destrieux, x_wmparc = smri_features
+                smri_embed = self.smri_encoder(x_aseg, x_destrieux, x_wmparc)        # (B, embed_dim)
+            elif self.smri_encoder_type == 'mlp':
+                smri_embed = self.smri_encoder(
+                    smri_features
+                )
             
         embeddings = F.softmax(embeddings, dim=-1)
         # Generate adjacency matrices
@@ -653,3 +709,590 @@ class DHGFormer(nn.Module):
         
 
         return prediction, full_adjacency, edge_variance
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+class GATLayer(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        num_heads=4,
+        dropout=0.1,
+        concat=True
+    ):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.num_heads = num_heads
+        self.concat = concat
+
+        # Linear projection for each attention head
+        self.linear = nn.Linear(
+            input_dim,
+            output_dim * num_heads,
+            bias=False
+        )
+
+        # Attention parameters
+        self.att_src = nn.Parameter(
+            torch.empty(num_heads, output_dim)
+        )
+
+        self.att_dst = nn.Parameter(
+            torch.empty(num_heads, output_dim)
+        )
+
+        if concat:
+            self.out_dim = output_dim * num_heads
+        else:
+            self.out_dim = output_dim
+
+        self.dropout = nn.Dropout(dropout)
+        self.leaky_relu = nn.LeakyReLU(0.2)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.linear.weight)
+        nn.init.xavier_uniform_(self.att_src)
+        nn.init.xavier_uniform_(self.att_dst)
+
+    def forward(self, x, adjacency):
+        """
+        x:
+            [B, N, F]
+
+        adjacency:
+            [B, N, N]
+
+        return:
+            [B, N, output_dim * num_heads] if concat=True
+            [B, N, output_dim] otherwise
+        """
+
+        B, N, _ = x.shape
+
+        # ==========================================
+        # Linear projection
+        # ==========================================
+
+        h = self.linear(x)
+
+        # [B, N, H, F]
+        h = h.view(
+            B,
+            N,
+            self.num_heads,
+            self.output_dim
+        )
+
+        # ==========================================
+        # Attention scores
+        # ==========================================
+
+        # [B, N, H]
+        alpha_src = (
+            h * self.att_src
+        ).sum(dim=-1)
+
+        # [B, N, H]
+        alpha_dst = (
+            h * self.att_dst
+        ).sum(dim=-1)
+
+        # [B, N, N, H]
+        attention = (
+            alpha_src.unsqueeze(2)
+            +
+            alpha_dst.unsqueeze(1)
+        )
+
+        attention = self.leaky_relu(attention)
+
+        # ==========================================
+        # Mask non-neighbors
+        # ==========================================
+
+        adjacency = adjacency.bool()
+
+        attention = attention.masked_fill(
+            ~adjacency.unsqueeze(-1),
+            float("-inf")
+        )
+
+        # ==========================================
+        # Softmax over neighbors
+        # ==========================================
+
+        attention = torch.softmax(
+            attention,
+            dim=2
+        )
+
+        attention = self.dropout(attention)
+
+        # ==========================================
+        # Weighted aggregation
+        # ==========================================
+
+        # h:
+        # [B, N, H, F]
+
+        # attention:
+        # [B, N, N, H]
+
+        out = torch.einsum(
+            "bijh,bjhf->bihf",
+            attention,
+            h
+        )
+
+        # ==========================================
+        # Multi-head output
+        # ==========================================
+
+        if self.concat:
+            out = out.reshape(
+                B,
+                N,
+                self.num_heads * self.output_dim
+            )
+        else:
+            out = out.mean(dim=2)
+
+        return out
+    
+    
+    
+    
+    
+class CrossGATPredictor(nn.Module):
+    
+    def __init__(
+        self,
+        node_input_dim,
+        roi_num=360,
+        num_heads=4
+    ):
+        super().__init__()
+
+        self.roi_num = roi_num
+
+        self.subnetwork_ends = [
+            41, 70, 91, 110,
+            130, 137, 158, 200
+        ]
+
+        num_subnetworks = len(self.subnetwork_ends)
+
+        # =====================================================
+        # Layer 1
+        # =====================================================
+
+        # ROI -> ROI
+        self.gat1_intra = GATLayer(
+            input_dim=node_input_dim,
+            output_dim=roi_num // num_heads,
+            num_heads=num_heads,
+            dropout=0.1,
+            concat=True
+        )
+
+        # Subnetwork -> Subnetwork
+        self.gat1_inter = GATLayer(
+            input_dim=node_input_dim,
+            output_dim=roi_num // num_heads,
+            num_heads=num_heads,
+            dropout=0.1,
+            concat=True
+        )
+
+        self.bn1 = nn.BatchNorm1d(roi_num)
+
+
+        # =====================================================
+        # Layer 2
+        # =====================================================
+
+        self.gat2_intra = GATLayer(
+            input_dim=roi_num,
+            output_dim=roi_num // num_heads,
+            num_heads=num_heads,
+            dropout=0.1,
+            concat=True
+        )
+
+        self.gat2_inter = GATLayer(
+            input_dim=roi_num,
+            output_dim=roi_num // num_heads,
+            num_heads=num_heads,
+            dropout=0.1,
+            concat=True
+        )
+
+        self.bn2 = nn.BatchNorm1d(roi_num)
+
+
+        # =====================================================
+        # Layer 3
+        # =====================================================
+
+        self.gat3_intra = GATLayer(
+            input_dim=roi_num,
+            output_dim=8,
+            num_heads=1,
+            dropout=0.1,
+            concat=True
+        )
+
+        self.gat3_inter = GATLayer(
+            input_dim=roi_num,
+            output_dim=8,
+            num_heads=1,
+            dropout=0.1,
+            concat=True
+        )
+
+        self.bn3 = nn.BatchNorm1d(8)
+
+
+    def average_subnetwork_features(
+        self,
+        features,
+        subnetwork_ends
+    ):
+
+        batch_size, _, feature_dim = features.shape
+
+        num_subnetworks = len(
+            subnetwork_ends
+        )
+
+        subnetwork_starts = (
+            [0] + subnetwork_ends[:-1]
+        )
+
+        subnetwork_features = torch.zeros(
+            batch_size,
+            num_subnetworks,
+            feature_dim,
+            device=features.device,
+            dtype=features.dtype
+        )
+
+        for i in range(num_subnetworks):
+
+            start_idx = subnetwork_starts[i]
+            end_idx = subnetwork_ends[i]
+
+            region_features = features[
+                :,
+                start_idx:end_idx,
+                :
+            ]
+
+            subnetwork_features[:, i, :] = (
+                region_features.mean(dim=1)
+            )
+
+        return subnetwork_features
+
+
+    def propagate_subnetwork_features(
+        self,
+        subnetwork_features,
+        node_features,
+        subnetwork_ends
+    ):
+        """
+        subnetwork_features:
+            [B, S, F_out]
+
+        node_features:
+            [B, N, F_in]
+
+        خروجی:
+            [B, N, F_out]
+        """
+
+        batch_size = subnetwork_features.shape[0]
+        feature_dim = subnetwork_features.shape[-1]
+
+        subnetwork_starts = [0] + subnetwork_ends[:-1]
+
+        propagated_features = torch.zeros(
+            batch_size,
+            self.roi_num,
+            feature_dim,
+            device=subnetwork_features.device,
+            dtype=subnetwork_features.dtype
+        )
+
+        for i in range(len(subnetwork_ends)):
+
+            start_idx = subnetwork_starts[i]
+            end_idx = subnetwork_ends[i]
+
+            expanded_features = (
+                subnetwork_features[:, i, :]
+                .unsqueeze(1)
+                .expand(
+                    -1,
+                    end_idx - start_idx,
+                    -1
+                )
+            )
+
+            propagated_features[
+                :,
+                start_idx:end_idx,
+                :
+            ] = expanded_features
+
+        return propagated_features
+    
+    
+    def forward(
+        self,
+        adjacency_matrix,
+        intra_adjacency,
+        inter_adjacency,
+        node_features
+    ):
+
+        batch_size = node_features.shape[0]
+
+
+        # =====================================================
+        # First Cross-GAT
+        # =====================================================
+
+        # -------------------------
+        # Intra ROI attention
+        # -------------------------
+
+        intra_features = self.gat1_intra(
+            node_features,
+            intra_adjacency
+        )
+
+
+        # -------------------------
+        # Pool ROI -> subnetworks
+        # -------------------------
+
+        subnetwork_features = (
+            self.average_subnetwork_features(
+                node_features,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # -------------------------
+        # Inter-subnetwork attention
+        # -------------------------
+
+        subnetwork_features = self.gat1_inter(
+            subnetwork_features,
+            inter_adjacency
+        )
+
+
+        # -------------------------
+        # Subnetwork -> ROI
+        # -------------------------
+
+        inter_features = (
+            self.propagate_subnetwork_features(
+                subnetwork_features,
+                node_features,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # -------------------------
+        # Combine
+        # -------------------------
+
+        x = intra_features + inter_features
+
+
+        x = x.reshape(
+            batch_size * self.roi_num,
+            -1
+        )
+
+        x = self.bn1(x)
+
+        x = x.reshape(
+            batch_size,
+            self.roi_num,
+            -1
+        )
+
+
+        # =====================================================
+        # Second Cross-GAT
+        # =====================================================
+
+        # -------------------------
+        # Intra
+        # -------------------------
+
+        intra_features = self.gat2_intra(
+            x,
+            intra_adjacency
+        )
+
+
+        # -------------------------
+        # ROI -> subnetworks
+        # -------------------------
+
+        subnetwork_features = (
+            self.average_subnetwork_features(
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # -------------------------
+        # Inter
+        # -------------------------
+
+        subnetwork_features = self.gat2_inter(
+            subnetwork_features,
+            inter_adjacency
+        )
+
+
+        # -------------------------
+        # Subnetwork -> ROI
+        # -------------------------
+
+        inter_features = (
+            self.propagate_subnetwork_features(
+                subnetwork_features,
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # -------------------------
+        # Combine
+        # -------------------------
+
+        x = intra_features + inter_features
+
+
+        x = x.reshape(
+            batch_size * self.roi_num,
+            -1
+        )
+
+        x = self.bn2(x)
+
+        x = x.reshape(
+            batch_size,
+            self.roi_num,
+            -1
+        )
+
+
+        # =====================================================
+        # Third Cross-GAT
+        # =====================================================
+
+        # -------------------------
+        # Intra
+        # -------------------------
+
+        intra_features = self.gat3_intra(
+            x,
+            intra_adjacency
+        )
+
+
+        # -------------------------
+        # ROI -> subnetworks
+        # -------------------------
+
+        subnetwork_features = (
+            self.average_subnetwork_features(
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # -------------------------
+        # Inter
+        # -------------------------
+
+        subnetwork_features = self.gat3_inter(
+            subnetwork_features,
+            inter_adjacency
+        )
+
+
+        # -------------------------
+        # Subnetwork -> ROI
+        # -------------------------
+
+        inter_features = (
+            self.propagate_subnetwork_features(
+                subnetwork_features,
+                x,
+                self.subnetwork_ends
+            )
+        )
+
+
+        # -------------------------
+        # Combine
+        # -------------------------
+
+        x = intra_features + inter_features
+
+
+        x = x.reshape(
+            batch_size * self.roi_num,
+            -1
+        )
+
+        x = self.bn3(x)
+
+        x = x.reshape(
+            batch_size,
+            self.roi_num,
+            -1
+        )
+
+
+        # =====================================================
+        # Output
+        # =====================================================
+
+        x = x.reshape(
+            batch_size,
+            -1
+        )
+
+        return x    
