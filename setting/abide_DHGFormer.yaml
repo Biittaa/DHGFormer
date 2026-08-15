@@ -6,14 +6,15 @@ data:
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  use_smri: false
-  smri_encoder: gcn
+  use_smri: true
+  smri_encoder: mlp
   # time_seires: abide.npy
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   # time_series_subjects_order: subject_order.txt
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   # smri: abide_smri.csv
   smri: /content/drive/MyDrive/DHGFormer/abide_smri.csv
+  
 
 model:
   type: DHGFormer
@@ -31,6 +32,7 @@ model:
 
   dropout: 0.5
 
+  message_passing_type: GCN
 
 
 train:
