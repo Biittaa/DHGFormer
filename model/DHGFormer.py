@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder
+from model.Encoder import FCEncoder, SMRIFCNEncoder
 import pickle
 
 
@@ -125,7 +125,7 @@ class CrossGCNPredictor(nn.Module):
         # Combine original and propagated features
         return (node_features + propagated_features) / 2
 
-    def forward(self, adjacency_matrix, intra_adjacency, inter_adjacency, node_features):
+    def forward_features(self, adjacency_matrix, intra_adjacency, inter_adjacency, node_features):
         batch_size = intra_adjacency.shape[0]
 
         # First propagation layer
@@ -160,6 +160,10 @@ class CrossGCNPredictor(nn.Module):
 
         # Classifier
         x = x.view(batch_size, -1)
+        # return self.classifier(x)
+        return x
+    def forward(self, adjacency_matrix, intra_adjacency, inter_adjacency, node_features):
+        x = self.forward_features(adjacency_matrix, intra_adjacency, inter_adjacency, node_features)
         return self.classifier(x)
 
 
@@ -203,9 +207,11 @@ class Embed2GraphByLinear(nn.Module):
 
 class DHGFormer(nn.Module):
 
-    def __init__(self, model_config, roi_num=360, node_feature_dim=360, time_series_len=512):
+    def __init__(self, model_config, roi_num=360, node_feature_dim=360, time_series_len=512, use_smri=False, smri_input_dim=1):
         super().__init__()
         self.graph_generation = model_config['graph_generation']
+        self.use_smri = use_smri
+        self.fusion_method = model_config.get('fusion_method', 'concat')
 
         # Feature extractor
         if model_config['extractor_type'] == 'transformer':
@@ -228,6 +234,20 @@ class DHGFormer(nn.Module):
             )
 
         self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
+        
+        if self.use_smri:
+            smri_hid_1 = model_config.get('smri_hid_1', 500)
+            smri_hid_2 = model_config.get('smri_hid_2', 30)
+            smri_dropout = model_config.get('smri_dropout', 0.5)
+            self.smri_encoder = SMRIFCNEncoder(
+                input_dim=smri_input_dim,
+                hid_1=smri_hid_1,
+                hid_2=smri_hid_2,
+                dropout=smri_dropout
+            )
+            fmri_embed_dim = 8 * roi_num
+            fusion_input_dim = fmri_embed_dim + smri_hid_2
+            self.fusion_classifier = nn.Linear(fusion_input_dim, 2)
 
         # Load node cluster mapping
         with open('./node_clus_map.pickle', 'rb') as f:
@@ -241,7 +261,7 @@ class DHGFormer(nn.Module):
         return features[:, self.cluster_order, :] if dimension == 1 else \
             features[:, self.cluster_order, :][:, :, self.cluster_order]
 
-    def forward(self, time_series: torch.Tensor, node_features: torch.Tensor):
+    def forward(self, time_series: torch.Tensor, node_features: torch.Tensor, smri_features: torch.Tensor = None):
         # Reorder inputs according to cluster mapping
         time_series = self.reorder_nodes(time_series, dimension=1)
         node_features = self.reorder_nodes(node_features, dimension=2)
@@ -265,11 +285,27 @@ class DHGFormer(nn.Module):
         edge_variance = torch.mean(torch.var(full_adjacency.reshape((batch_size, -1)), dim=1))
 
         # Make prediction
-        prediction = self.predictor(
+        # prediction = self.predictor(
+        #     full_adjacency,
+        #     intra_adjacency,
+        #     inter_adjacency,
+        #     node_features
+        # )
+        
+        fmri_embedding = self.predictor.forward_features(
             full_adjacency,
             intra_adjacency,
             inter_adjacency,
             node_features
         )
+
+        if self.use_smri and smri_features is not None:
+            smri_embedding = self.smri_encoder(smri_features)
+            fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
+            prediction = self.fusion_classifier(fused_embedding)
+        else:
+            prediction = self.predictor.classifier(fmri_embedding)
+        
+        
 
         return prediction, full_adjacency, edge_variance

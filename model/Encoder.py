@@ -104,3 +104,27 @@ class FCEncoder(torch.nn.Module):
         x = self.layer(x, mask)
 
         return x
+    
+    
+class SMRIFCNEncoder(torch.nn.Module):
+    """FCN-style sMRI encoder. Mirrors FCN.ipynb's first two linear blocks;
+    output is the embedding BEFORE the final classification layer, so it can
+    be concatenated with the fMRI embedding for late fusion."""
+
+    def __init__(self, input_dim, hid_1=500, hid_2=30, dropout=0.5):
+        super().__init__()
+        self.linear_1 = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, hid_1),
+            torch.nn.Dropout(dropout),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.BatchNorm1d(hid_1)
+        )
+        self.linear_2 = torch.nn.Linear(hid_1, hid_2)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.relu = torch.nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        x = torch.flatten(x, start_dim=1, end_dim=-1)
+        x = self.relu(self.linear_1(x))
+        x = self.relu(self.dropout(self.linear_2(x)))
+        return x    

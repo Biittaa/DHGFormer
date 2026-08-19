@@ -56,16 +56,16 @@ class BasicTrain:
 
         self.model.train()
 
-        for data_in, pearson, label, _ in self.train_dataloader:
+        for data_in, pearson, label, _, smri in self.train_dataloader:
             label = label.long()
 
-            data_in, pearson, label = data_in.to(
-                device), pearson.to(device), label.to(device)
+            data_in, pearson, label,smri = data_in.to(
+                device), pearson.to(device), label.to(device), smri.to(device)
 
-            inputs, nodes, targets_a, targets_b, lam = mixup_data(
-                data_in, pearson, label, 1, device)
+            inputs, nodes, targets_a, targets_b, lam, smri_mixed = mixup_data(
+                data_in, pearson, label, 1, device, extra=smri)
 
-            output, learnable_matrix, edge_variance = self.model(inputs, nodes)
+            output, learnable_matrix, edge_variance = self.model(inputs, nodes, smri_mixed)
 
             loss = 2 * mixup_criterion(
                 self.loss_fn, output, targets_a, targets_b, lam)
@@ -93,11 +93,11 @@ class BasicTrain:
 
         self.model.eval()
 
-        for data_in, pearson, label, _ in dataloader:
+        for data_in, pearson, label, _,smri in dataloader:
             label = label.long()
-            data_in, pearson, label = data_in.to(
-                device), pearson.to(device), label.to(device)
-            output, _, _ = self.model(data_in, pearson)
+            data_in, pearson, label, smri = data_in.to(
+                device), pearson.to(device), label.to(device), smri.to(device)
+            output, _, _ = self.model(data_in, pearson, smri)
 
             loss = self.loss_fn(output, label)
             loss_meter.update_with_weight(
@@ -121,11 +121,11 @@ class BasicTrain:
 
         labels = []
 
-        for data_in, nodes, label, _ in self.test_dataloader:
+        for data_in, nodes, label, _, smri in self.test_dataloader:
             label = label.long()
-            data_in, nodes, label = data_in.to(
-                device), nodes.to(device), label.to(device)
-            _, learable_matrix, _ = self.model(data_in, nodes)
+            data_in, nodes, label, smri = data_in.to(
+                device), nodes.to(device), label.to(device), smri.to(device)
+            _, learable_matrix, _ = self.model(data_in, nodes, smri)
 
             learable_matrixs.append(learable_matrix.cpu().detach().numpy())
             labels += label.tolist()
@@ -155,9 +155,9 @@ class BasicTrain:
             test_result, con_matrix = self.test_per_epoch(self.test_dataloader,
                                               self.test_loss, self.test_accuracy)
 
-            if self.best_acc <= self.test_accuracy.avg:
-                self.best_acc = self.test_accuracy.avg
-                self.best_model = self.model
+            # if self.best_acc <= self.test_accuracy.avg:
+            #     self.best_acc = self.test_accuracy.avg
+            #     self.best_model = self.model
 
             if (con_matrix[0][0] + con_matrix[1][0]) != 0:
                 SEN = con_matrix[0][0] / (con_matrix[0][0] + con_matrix[1][0])
@@ -168,6 +168,18 @@ class BasicTrain:
                 SPE = con_matrix[1][1] / (con_matrix[1][1] + con_matrix[0][1])
             else:
                 SPE = 0
+                
+                
+            if self.best_acc <= self.val_accuracy.avg:
+                self.best_acc_val = self.val_accuracy.avg
+                self.best_auc_val = val_result[0]
+                self.best_model = self.model
+                
+                self.best_acc = self.test_accuracy.avg
+                self.best_auc_test = test_result[0]
+                self.best_sen = SEN
+                self.best_spe = SPE
+                self.best_f1 = test_result[-4]    
 
             self.logger.info(" | ".join([
                 f'Epoch[{epoch}/{self.epochs}]',

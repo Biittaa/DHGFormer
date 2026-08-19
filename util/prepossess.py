@@ -3,8 +3,25 @@ import numpy as np
 import random
 
 
-def mixup_data(x, nodes, y, alpha=1.0, device='cuda'):
-    '''Returns mixed inputs, pairs of targets, and lambda'''
+# def mixup_data(x, nodes, y, alpha=1.0, device='cuda'):
+#     '''Returns mixed inputs, pairs of targets, and lambda'''
+#     if alpha > 0:
+#         lam = np.random.beta(alpha, alpha)
+#     else:
+#         lam = 1
+
+#     batch_size = x.size()[0]
+#     index = torch.randperm(batch_size).to(device)
+
+#     mixed_nodes = lam * nodes + (1 - lam) * nodes[index, :]
+#     mixed_x = lam * x + (1 - lam) * x[index, :]
+#     y_a, y_b = y, y[index]
+#     return mixed_x, mixed_nodes, y_a, y_b, lam
+
+def mixup_data(x, nodes, y, alpha=1.0, device='cuda', extra=None):
+    '''Returns mixed inputs, pairs of targets, and lambda.
+    If extra (e.g. sMRI features) is given, it is mixed with the same lam/index
+    as x and nodes, so the extra tensor stays paired with the mixed sample.'''
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
@@ -16,6 +33,11 @@ def mixup_data(x, nodes, y, alpha=1.0, device='cuda'):
     mixed_nodes = lam * nodes + (1 - lam) * nodes[index, :]
     mixed_x = lam * x + (1 - lam) * x[index, :]
     y_a, y_b = y, y[index]
+
+    if extra is not None:
+        mixed_extra = lam * extra + (1 - lam) * extra[index, :]
+        return mixed_x, mixed_nodes, y_a, y_b, lam, mixed_extra
+
     return mixed_x, mixed_nodes, y_a, y_b, lam
 
 

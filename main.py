@@ -25,13 +25,17 @@ def main(args, current_seed):
         torch.cuda.manual_seed(current_seed)
         torch.cuda.manual_seed_all(current_seed)
 
-        dataloaders, node_size, node_feature_size, timeseries_size = \
+        dataloaders, node_size, node_feature_size, timeseries_size, smri_dim = \
             init_dataloader(config['data'])
         config['train']["seq_len"] = timeseries_size
         config['train']["node_size"] = node_size
 
+        # model = DHGFormer(config['model'], node_size,
+        #                  node_feature_size, timeseries_size)
         model = DHGFormer(config['model'], node_size,
-                         node_feature_size, timeseries_size)
+                         node_feature_size, timeseries_size,
+                         use_smri=config['data'].get('use_smri', False),
+                         smri_input_dim=smri_dim)
         use_train = BasicTrain
 
         optimizer = torch.optim.Adam(

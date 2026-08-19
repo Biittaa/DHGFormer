@@ -6,7 +6,15 @@ data:
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  time_seires: abide.npy
+  # time_seires: D:/Desk/Brain Graph/bestmellah/DHGFormer/abide.npy
+  # smri_path: C:/Users/Lenovo/Desktop/data/abide_smri.csv
+  use_smri: true
+  smri_encoder_type: fcn
+  # time_series_subjects_order: D:/Desk/Brain Graph/bestmellah/DHGFormer/subject_order.txt
+  time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
+  time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
+  smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
+  
 
 model:
   type: DHGFormer
@@ -24,13 +32,18 @@ model:
 
   dropout: 0.5
 
+  fusion_method: concat
+  smri_hid_1: 500
+  smri_hid_2: 30
+  smri_dropout: 0.5
+
 
 
 train:
   method: normal
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  epochs: 2
+  epochs: 100
   optimizer: adam
 
   group_loss: true
