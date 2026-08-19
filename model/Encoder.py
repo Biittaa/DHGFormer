@@ -2,6 +2,7 @@ import torch.nn
 import torch
 
 
+
 class FullyConnectedOutput(torch.nn.Module):
     def __init__(self, embed_dim, input_dim):
         super().__init__()
@@ -127,4 +128,29 @@ class SMRIFCNEncoder(torch.nn.Module):
         x = torch.flatten(x, start_dim=1, end_dim=-1)
         x = self.relu(self.linear_1(x))
         x = self.relu(self.dropout(self.linear_2(x)))
-        return x    
+        return x
+    
+import torch.nn as nn   
+class ModalityAttentionFusion(nn.Module):
+    """Learns per-sample importance weights for fMRI vs sMRI embeddings
+    before fusing them (weighted concat)."""
+
+    def __init__(self, fmri_dim, smri_dim, hidden_dim=64):
+        super().__init__()
+        self.fmri_proj = nn.Linear(fmri_dim, hidden_dim)
+        self.smri_proj = nn.Linear(smri_dim, hidden_dim)
+        self.attn = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 2)   
+        )
+
+    def forward(self, fmri_emb, smri_emb):
+        f = self.fmri_proj(fmri_emb)
+        s = self.smri_proj(smri_emb)
+        scores = self.attn(torch.cat([f, s], dim=1))       # [B, 2]
+        weights = torch.softmax(scores, dim=1)             
+        w_f, w_s = weights[:, 0:1], weights[:, 1:2]
+
+        fused = torch.cat([w_f * fmri_emb, w_s * smri_emb], dim=1)
+        return fused, weights     

@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder
+from model.Encoder import FCEncoder, SMRIFCNEncoder, ModalityAttentionFusion
 import pickle
 
 
@@ -247,7 +247,18 @@ class DHGFormer(nn.Module):
             )
             fmri_embed_dim = 8 * roi_num
             fusion_input_dim = fmri_embed_dim + smri_hid_2
+            if self.fusion_method == 'attention':
+                    fusion_hidden_dim = model_config.get('fusion_hidden_dim', 64)
+                    self.modality_fusion = ModalityAttentionFusion(
+                        fmri_dim=fmri_embed_dim,
+                        smri_dim=smri_hid_2,
+                        hidden_dim=fusion_hidden_dim
+                    )
+            elif self.fusion_method != 'concat':
+                raise ValueError(f"Unknown fusion_method: {self.fusion_method}")
+
             self.fusion_classifier = nn.Linear(fusion_input_dim, 2)
+            # self.fusion_classifier = nn.Linear(fusion_input_dim, 2)
 
         # Load node cluster mapping
         with open('./node_clus_map.pickle', 'rb') as f:
@@ -299,10 +310,21 @@ class DHGFormer(nn.Module):
             node_features
         )
 
+        # if self.use_smri and smri_features is not None:
+        #     smri_embedding = self.smri_encoder(smri_features)
+        #     fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
+        #     prediction = self.fusion_classifier(fused_embedding)
+        # else:
+        #     prediction = self.predictor.classifier(fmri_embedding)
         if self.use_smri and smri_features is not None:
-            smri_embedding = self.smri_encoder(smri_features)
-            fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
-            prediction = self.fusion_classifier(fused_embedding)
+                smri_embedding = self.smri_encoder(smri_features)
+
+                if self.fusion_method == 'attention':
+                    fused_embedding, modality_weights = self.modality_fusion(fmri_embedding, smri_embedding)
+                else:  # concat
+                    fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
+
+                prediction = self.fusion_classifier(fused_embedding)
         else:
             prediction = self.predictor.classifier(fmri_embedding)
         
