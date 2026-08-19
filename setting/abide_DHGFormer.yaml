@@ -53,3 +53,4 @@ train:
 
   # uniform or pearson
   pure_gnn_graph: pearson
+  val_ratio: 0.1
