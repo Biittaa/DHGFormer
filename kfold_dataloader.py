@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from nilearn import plotting, datasets
 import random
+from sklearn.linear_model import RidgeClassifier
+from sklearn.feature_selection import RFE
 
 
 class StandardScaler:
@@ -28,6 +30,19 @@ class StandardScaler:
 
     def inverse_transform(self, data):
         return (data * self.std) + self.mean
+    
+    
+def smri_ridge_feature_selection(smri_features, labels_np, train_idx, n_features):
+    
+    labels_flat = np.asarray(labels_np).reshape(-1)
+    n_features = min(n_features, smri_features.shape[1])
+
+    estimator = RidgeClassifier()
+    selector = RFE(estimator, n_features_to_select=n_features, step=100, verbose=1)
+    selector.fit(smri_features[train_idx, :], labels_flat[train_idx])
+
+    print(f"sMRI Ridge-RFE: kept {n_features} of {smri_features.shape[1]} features")
+    return selector.transform(smri_features)
 
 
 def load_smri_features(dataset_config, num_subjects):
@@ -121,14 +136,14 @@ def load_smri_features(dataset_config, num_subjects):
     nan_rows, nan_cols = np.where(np.isnan(smri_features))
     smri_features[nan_rows, nan_cols] = col_means[nan_cols]
 
-    feat_std = smri_features.std(axis=0)
-    keep_cols = feat_std > 1e-8
-    if not np.all(keep_cols):
-        print(f"sMRI: dropping {np.sum(~keep_cols)} constant feature column(s)")
+    # feat_std = smri_features.std(axis=0)
+    # keep_cols = feat_std > 1e-8
+    # if not np.all(keep_cols):
+    #     print(f"sMRI: dropping {np.sum(~keep_cols)} constant feature column(s)")
     
-    smri_features = smri_features[:, keep_cols]
-    feature_cols = [c for c, k in zip(feature_cols, keep_cols) if k]
-    feature_dim = smri_features.shape[1]
+    # smri_features = smri_features[:, keep_cols]
+    # feature_cols = [c for c, k in zip(feature_cols, keep_cols) if k]
+    # feature_dim = smri_features.shape[1]
     
     smri_scaler = StandardScaler(mean=np.mean(smri_features, axis=0),
                                   std=np.std(smri_features, axis=0) + 1e-8)
@@ -312,16 +327,31 @@ def init_dataloader_kfold(dataset_config, fold_idx, kfold=5, val_ratio=0.1, seed
     """Real stratified k-fold cross validation loader.
     Call this once per fold_idx (0..kfold-1) from main.py."""
     raw = _load_raw_tensors(dataset_config)
+    
+    train_idx, val_idx, test_idx = get_kfold_split_indices(
+        raw["labels_np"], kfold=kfold, fold_idx=fold_idx,
+        val_ratio=val_ratio, seed=seed
+    )
+
+    smri_features_t = raw["smri_features"]
+    smri_dim = raw["smri_dim"]
+    if dataset_config.get("use_smri", False) and dataset_config.get("use_smri_ridge_fs", False):
+        n_select = dataset_config.get("smri_ridge_num_features", 1435)
+        smri_np = smri_ridge_feature_selection(
+            smri_features_t.numpy(), raw["labels_np"], train_idx, n_select
+        )
+        smri_features_t = torch.from_numpy(smri_np).float()
+        smri_dim = smri_features_t.shape[1]
 
     dataset = utils.TensorDataset(
         raw["final_fc"], raw["final_pearson"], raw["labels"],
         raw["pseudo_arr"], raw["smri_features"]
     )
 
-    train_idx, val_idx, test_idx = get_kfold_split_indices(
-        raw["labels_np"], kfold=kfold, fold_idx=fold_idx,
-        val_ratio=val_ratio, seed=seed
-    )
+    # train_idx, val_idx, test_idx = get_kfold_split_indices(
+    #     raw["labels_np"], kfold=kfold, fold_idx=fold_idx,
+    #     val_ratio=val_ratio, seed=seed
+    # )
 
     print(f"[Fold {fold_idx+1}/{kfold}] train={len(train_idx)} "
           f"val={len(val_idx)} test={len(test_idx)}")
