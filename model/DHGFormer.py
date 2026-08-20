@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion
+from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder
 import pickle
 
 
@@ -235,6 +235,32 @@ class DHGFormer(nn.Module):
 
         self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
         
+        self.use_temporal = model_config.get('temporal_encoder_type', 'none') != 'none'
+        if self.use_temporal:
+            window_proj_dim = model_config.get('window_proj_dim', 128)
+            temporal_num_heads = model_config.get('temporal_num_heads', 4)
+            temporal_num_layers = model_config.get('temporal_num_layers', 2)
+            temporal_dropout = model_config.get('temporal_dropout', 0.1)
+            max_windows = model_config.get('max_windows', 64)
+
+            self.window_proj = nn.Linear(8 * roi_num, window_proj_dim)
+            self.temporal_encoder = TemporalTransformerEncoder(
+                embed_dim=window_proj_dim,
+                num_heads=temporal_num_heads,
+                num_layers=temporal_num_layers,
+                max_windows=max_windows,
+                dropout=temporal_dropout
+            )
+            self.temporal_classifier = nn.Sequential(
+                nn.Linear(window_proj_dim, 32),
+                nn.LeakyReLU(negative_slope=0.2),
+                nn.Linear(32, 2)
+            )
+            self.fmri_out_dim = window_proj_dim
+        else:
+            self.fmri_out_dim = 8 * roi_num
+        
+        
         if self.use_smri:
             # smri_hid_1 = model_config.get('smri_hid_1', 500)
             smri_hid_2 = model_config.get('smri_hid_2', 30)
@@ -269,12 +295,13 @@ class DHGFormer(nn.Module):
             #     hid_2=smri_hid_2,
             #     dropout=smri_dropout
             # )
-            fmri_embed_dim = 8 * roi_num
-            fusion_input_dim = fmri_embed_dim + smri_hid_2
+            # fmri_embed_dim = 8 * roi_num
+            # fusion_input_dim = fmri_embed_dim + smri_hid_2
+            fusion_input_dim = self.fmri_out_dim + smri_hid_2
             if self.fusion_method == 'attention':
                     fusion_hidden_dim = model_config.get('fusion_hidden_dim', 64)
                     self.modality_fusion = ModalityAttentionFusion(
-                        fmri_dim=fmri_embed_dim,
+                        fmri_dim=self.fmri_out_dim,
                         smri_dim=smri_hid_2,
                         hidden_dim=fusion_hidden_dim
                     )
@@ -297,6 +324,13 @@ class DHGFormer(nn.Module):
             features[:, self.cluster_order, :][:, :, self.cluster_order]
 
     def forward(self, time_series: torch.Tensor, node_features: torch.Tensor, smri_features: torch.Tensor = None):
+        B, W = None, None
+        if self.use_temporal:
+            B, W, roi_ts, T = time_series.shape
+            _, _, roi_nf1, roi_nf2 = node_features.shape
+            time_series = time_series.reshape(B * W, roi_ts, T)
+            node_features = node_features.reshape(B * W, roi_nf1, roi_nf2)
+        
         # Reorder inputs according to cluster mapping
         time_series = self.reorder_nodes(time_series, dimension=1)
         node_features = self.reorder_nodes(node_features, dimension=2)
@@ -314,6 +348,21 @@ class DHGFormer(nn.Module):
         full_adjacency = full_adjacency[:, :, :, 0]
         intra_adjacency = intra_adjacency[:, :, :, 0]
         inter_adjacency = inter_adjacency[:, :, :, 0]
+        
+        
+        fmri_embedding = self.predictor.forward_features(
+                full_adjacency, intra_adjacency, inter_adjacency, node_features
+            )
+        
+        
+        if self.use_temporal:
+            D = fmri_embedding.shape[-1]
+            fmri_embedding = fmri_embedding.view(B, W, D)
+            fmri_embedding = self.window_proj(fmri_embedding)        # [B, W, window_proj_dim]
+            fmri_embedding = self.temporal_encoder(fmri_embedding)   # [B, window_proj_dim]
+            roi_n = full_adjacency.shape[-1]
+            full_adjacency = full_adjacency.view(B, W, roi_n, roi_n).mean(dim=1)  # [B, ROI, ROI] برای loss/logging
+        
 
         # Compute edge variance regularization
         batch_size = full_adjacency.shape[0]
@@ -327,12 +376,12 @@ class DHGFormer(nn.Module):
         #     node_features
         # )
         
-        fmri_embedding = self.predictor.forward_features(
-            full_adjacency,
-            intra_adjacency,
-            inter_adjacency,
-            node_features
-        )
+        # fmri_embedding = self.predictor.forward_features(
+        #     full_adjacency,
+        #     intra_adjacency,
+        #     inter_adjacency,
+        #     node_features
+        # )
 
         # if self.use_smri and smri_features is not None:
         #     smri_embedding = self.smri_encoder(smri_features)
@@ -350,7 +399,10 @@ class DHGFormer(nn.Module):
 
                 prediction = self.fusion_classifier(fused_embedding)
         else:
-            prediction = self.predictor.classifier(fmri_embedding)
+            if self.use_temporal:
+                prediction = self.temporal_classifier(fmri_embedding)
+            else:
+                prediction = self.predictor.classifier(fmri_embedding)
         
         
 

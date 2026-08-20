@@ -13,6 +13,9 @@ data:
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
+  use_temporal_window: true
+  window_size: 30
+  window_stride: 10
   
 
 model:
@@ -35,6 +38,14 @@ model:
   smri_hid_1: 500
   smri_hid_2: 30
   smri_dropout: 0.5
+
+
+  temporal_encoder_type: transformer   
+  window_proj_dim: 128       
+  temporal_num_heads: 4
+  temporal_num_layers: 2
+  temporal_dropout: 0.1
+  max_windows: 64
 
 
 

@@ -207,3 +207,36 @@ class SMRITransformerEncoder(torch.nn.Module):
         out = self.transformer(tokens)
         cls_out = out[:, 0, :]
         return self.dropout(self.out_proj(cls_out))
+    
+    
+    
+    
+    
+    
+    
+class TemporalTransformerEncoder(torch.nn.Module):
+    def __init__(self, embed_dim, num_heads=4, num_layers=2,
+                 max_windows=64, dropout=0.1):
+        super().__init__()
+        self.cls_token = torch.nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = torch.nn.Parameter(
+            torch.zeros(1, max_windows + 1, embed_dim))
+        torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        torch.nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=num_heads,
+            dim_feedforward=embed_dim * 2, dropout=dropout,
+            batch_first=True)
+        self.transformer = torch.nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers)
+        self.dropout = torch.nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: [B, W, D]
+        b, w, _ = x.shape
+        cls = self.cls_token.expand(b, -1, -1)
+        tokens = torch.cat([cls, x], dim=1)          # [B, W+1, D]
+        tokens = tokens + self.pos_embed[:, :w + 1]
+        out = self.transformer(tokens)
+        return self.dropout(out[:, 0, :])            # [B, D]

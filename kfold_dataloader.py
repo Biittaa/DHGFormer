@@ -31,6 +31,29 @@ class StandardScaler:
     def inverse_transform(self, data):
         return (data * self.std) + self.mean
     
+def sliding_window_corr(fc_all, window, stride):
+    N, ROI, T = fc_all.shape
+    if window > T:
+        window = T
+    starts = list(range(0, T - window + 1, stride))
+    if len(starts) == 0:
+        starts = [0]
+    W = len(starts)
+
+    fc_windows = np.zeros((N, W, ROI, window), dtype=fc_all.dtype)
+    corr_windows = np.zeros((N, W, ROI, ROI), dtype=np.float64)
+
+    for i in range(N):
+        for w_idx, start in enumerate(starts):
+            seg = fc_all[i, :, start:start + window]
+            fc_windows[i, w_idx] = seg
+            c = np.corrcoef(seg)
+            c = np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+            corr_windows[i, w_idx] = c
+
+    print(f"[sliding_window_corr] T={T}, window={window}, stride={stride} -> {W} windows/subject")
+    return fc_windows, corr_windows, W
+    
     
 def smri_ridge_feature_selection(smri_features, labels_np, train_idx, n_features):
     
@@ -160,15 +183,32 @@ def _load_raw_tensors(dataset_config):
     final_pearson = data["corr"]
     labels = data["label"]
 
+    # _, _, timeseries = final_fc.shape
+    # _, node_size, node_feature_size = final_pearson.shape
+
+    # scaler = StandardScaler(mean=np.mean(final_fc), std=np.std(final_fc))
+    # final_fc = scaler.transform(final_fc)
+
+    # pseudo = []
+    # for i in range(len(final_fc)):
+    #     pseudo.append(np.diag(np.ones(final_pearson.shape[1])))
+    
     _, _, timeseries = final_fc.shape
     _, node_size, node_feature_size = final_pearson.shape
 
     scaler = StandardScaler(mean=np.mean(final_fc), std=np.std(final_fc))
     final_fc = scaler.transform(final_fc)
 
+    use_temporal = dataset_config.get("use_temporal_window", False)
+    if use_temporal:
+        window = dataset_config.get("window_size", 30)
+        stride = dataset_config.get("window_stride", 10)
+        final_fc, final_pearson, num_windows = sliding_window_corr(final_fc, window, stride)
+        timeseries = final_fc.shape[-1]     
+
     pseudo = []
     for i in range(len(final_fc)):
-        pseudo.append(np.diag(np.ones(final_pearson.shape[1])))
+        pseudo.append(np.diag(np.ones(node_size)))
 
     if 'cc200' in dataset_config['atlas']:
         pseudo_arr = np.concatenate(pseudo, axis=0).reshape((-1, 200, 200))
