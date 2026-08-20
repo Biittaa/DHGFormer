@@ -48,10 +48,17 @@ def load_smri_features(dataset_config, num_subjects):
     order_df = order_df.dropna(subset=["subject_id"]).copy()
     
     
+    # order_df["subject_id"] = (
+    #     order_df["subject_id"]
+    #     .astype(str)
+    #     .str.strip()
+    # )
+    
     order_df["subject_id"] = (
         order_df["subject_id"]
         .astype(str)
         .str.strip()
+        .apply(lambda x: str(int(x)))
     )
     
     order_df = order_df[
@@ -66,8 +73,14 @@ def load_smri_features(dataset_config, num_subjects):
     
     smri_df = pd.read_csv(dataset_config["smri_path"])
     
+    # smri_df["SUB_ID"] = smri_df["subject_id"].apply(
+    #     lambda s: re.findall(r"\d+", str(s))[-1]
+    #     if re.findall(r"\d+", str(s))
+    #     else None
+    # )
+    
     smri_df["SUB_ID"] = smri_df["subject_id"].apply(
-        lambda s: re.findall(r"\d+", str(s))[-1]
+        lambda s: str(int(re.findall(r"\d+", str(s))[-1]))
         if re.findall(r"\d+", str(s))
         else None
     )
@@ -81,6 +94,8 @@ def load_smri_features(dataset_config, num_subjects):
         for _, row in smri_df.iterrows()
         if row["SUB_ID"] is not None
     }
+    
+    
 
     feature_dim = len(feature_cols)
     if len(subject_order) != num_subjects:

@@ -47,11 +47,19 @@ def load_smri_features(dataset_config, num_subjects):
 
     order_df = order_df.dropna(subset=["subject_id"]).copy()
 
+    # order_df["subject_id"] = (
+    #     order_df["subject_id"]
+    #     .astype(str)
+    #     .str.strip()
+    # )
+    
     order_df["subject_id"] = (
         order_df["subject_id"]
         .astype(str)
         .str.strip()
+        .apply(lambda x: str(int(x)))
     )
+        
 
     order_df = order_df[
         order_df["subject_id"].str.fullmatch(r"\d+")
@@ -64,8 +72,14 @@ def load_smri_features(dataset_config, num_subjects):
 
     smri_df = pd.read_csv(dataset_config["smri_path"])
 
+    # smri_df["SUB_ID"] = smri_df["subject_id"].apply(
+    #     lambda s: re.findall(r"\d+", str(s))[-1]
+    #     if re.findall(r"\d+", str(s))
+    #     else None
+    # )
+    
     smri_df["SUB_ID"] = smri_df["subject_id"].apply(
-        lambda s: re.findall(r"\d+", str(s))[-1]
+        lambda s: str(int(re.findall(r"\d+", str(s))[-1]))
         if re.findall(r"\d+", str(s))
         else None
     )
