@@ -121,6 +121,15 @@ def load_smri_features(dataset_config, num_subjects):
     nan_rows, nan_cols = np.where(np.isnan(smri_features))
     smri_features[nan_rows, nan_cols] = col_means[nan_cols]
 
+    feat_std = smri_features.std(axis=0)
+    keep_cols = feat_std > 1e-8
+    if not np.all(keep_cols):
+        print(f"sMRI: dropping {np.sum(~keep_cols)} constant feature column(s)")
+    
+    smri_features = smri_features[:, keep_cols]
+    feature_cols = [c for c, k in zip(feature_cols, keep_cols) if k]
+    feature_dim = smri_features.shape[1]
+    
     smri_scaler = StandardScaler(mean=np.mean(smri_features, axis=0),
                                   std=np.std(smri_features, axis=0) + 1e-8)
     smri_features = smri_scaler.transform(smri_features)
