@@ -6,12 +6,9 @@ data:
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  time_seires: D:/Desk/Brain Graph/bestmellah/DHGFormer/abide.npy
-  # smri_path: C:/Users/Lenovo/Desktop/data/abide_smri.csv
   use_smri: false
   smri_encoder_type: fcn
-  # time_series_subjects_order: D:/Desk/Brain Graph/bestmellah/DHGFormer/subject_order.txt
-  # time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
+  time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
   
