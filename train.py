@@ -174,16 +174,16 @@ class BasicTrain:
                 
             if self.best_acc_val <= self.val_accuracy.avg:
                 self.best_acc_val = self.val_accuracy.avg
-            self.best_auc_val = val_result[0]
-            self.best_model = self.model
+                self.best_auc_val = val_result[0]
+                self.best_model = self.model
 
-            self.best_acc = self.test_accuracy.avg
-            self.best_auc_test = test_result[0]
-            self.best_sen = SEN
-            self.best_spe = SPE
-            self.best_f1 = test_result[-4]
-            self.best_train_acc = self.train_accuracy.avg
-            self.best_train_loss = self.train_loss.avg
+                self.best_acc = self.test_accuracy.avg
+                self.best_auc_test = test_result[0]
+                self.best_sen = SEN
+                self.best_spe = SPE
+                self.best_f1 = test_result[-4]
+                self.best_train_acc = self.train_accuracy.avg
+                self.best_train_loss = self.train_loss.avg
 
             self.logger.info(" | ".join([
                 f'Epoch[{epoch}/{self.epochs}]',
