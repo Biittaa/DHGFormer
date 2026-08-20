@@ -35,7 +35,7 @@ def mixup_data(x, nodes, y, alpha=1.0, device='cuda', extra=None):
     y_a, y_b = y, y[index]
 
     if extra is not None:
-        mixed_extra = lam * extra + (1 - lam) * extra[index, :]
+        mixed_extra = extra
         return mixed_x, mixed_nodes, y_a, y_b, lam, mixed_extra
 
     return mixed_x, mixed_nodes, y_a, y_b, lam

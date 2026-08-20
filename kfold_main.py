@@ -53,7 +53,8 @@ def main(args, config, fold_idx, kfold, base_seed):
     train_process = BasicTrain(
         config['train'], model, opts, dataloaders, save_folder_name)
 
-    train_process.train()
+    # train_process.train()
+    return train_process.train()
 
 
 if __name__ == '__main__':
@@ -87,11 +88,19 @@ if __name__ == '__main__':
     logger.info(f"Model {config['model']['type']} on {config['data']['dataset']} Dataset")
     logger.info(f"Running real Stratified {kfold}-Fold Cross Validation, base seed:{seed}")
 
+    all_fold_metrics = []
     for fold_idx in range(kfold):
         logger.info(f"Fold {fold_idx + 1}/{kfold}, base_seed:{seed}, device:{args.device}")
         with open(args.config_filename) as f:
             config = yaml.load(f, Loader=yaml.Loader)  # fresh copy per fold
-        main(args, config, fold_idx, kfold, seed)
+        fold_metrics = main(args, config, fold_idx, kfold, seed)
+        all_fold_metrics.append(fold_metrics)
         logger.info(f"Fold {fold_idx + 1} is done!")
+        
+        
+    logger.info("==== K-Fold Summary (mean ± std) ====")
+    for name in all_fold_metrics[0].keys():
+        values = np.array([m[name] for m in all_fold_metrics])
+        logger.info(f"{name}: {values.mean():.4f} ± {values.std():.4f}")
 
     logging.info(f"Done!")

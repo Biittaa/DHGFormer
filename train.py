@@ -27,6 +27,8 @@ class BasicTrain:
         self.best_model = None
         self.best_acc_val = 0
         self.best_auc_val = 0
+        self.best_train_acc = 0
+        self.best_train_loss = 0
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
 
         self.group_loss = train_config['group_loss']
@@ -179,7 +181,9 @@ class BasicTrain:
                 self.best_auc_test = test_result[0]
                 self.best_sen = SEN
                 self.best_spe = SPE
-                self.best_f1 = test_result[-4]    
+                self.best_f1 = test_result[-4] 
+                self.best_train_acc = self.train_accuracy.avg
+                self.best_train_loss = self.train_loss.avg   
 
             self.logger.info(" | ".join([
                 f'Epoch[{epoch}/{self.epochs}]',
@@ -208,3 +212,15 @@ class BasicTrain:
         if self.save_learnable_graph:
             self.generate_save_learnable_matrix()
         self.save_result(training_process, txt)
+        
+        return {
+                'train_acc': self.best_train_acc,
+                'train_loss': self.best_train_loss,
+                'val_acc': self.best_acc_val,
+                'val_auc': self.best_auc_val,
+                'test_acc': self.best_acc,
+                'test_auc': self.best_auc_test,
+                'test_sen': self.best_sen,
+                'test_spe': self.best_spe,
+                'test_f1': self.best_f1,
+        }

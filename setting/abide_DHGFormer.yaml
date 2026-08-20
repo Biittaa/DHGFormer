@@ -8,6 +8,8 @@ data:
   val_set: 0.1
   use_smri: false
   smri_encoder_type: fcn
+  use_smri_ridge_fs: false
+  smri_ridge_num_features: 1435
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
@@ -40,7 +42,7 @@ train:
   method: normal
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  epochs: 30
+  epochs: 2
   optimizer: adam
 
   group_loss: true

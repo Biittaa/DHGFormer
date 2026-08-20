@@ -55,7 +55,8 @@ def main(args, current_seed):
         train_process = use_train(
             config['train'], model, opts, dataloaders, save_folder_name)
 
-        train_process.train()
+        # train_process.train()
+        return train_process.train()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -83,9 +84,17 @@ if __name__ == '__main__':
     with open(args.config_filename) as f:
         config = yaml.load(f, Loader=yaml.Loader)
         logger.info(f"Model {config['model']['type']} on {config['data']['dataset']} Dataset")
+        
+    all_metrics = []    
     for i in range(args.repeat_time):
         current_seed = seed + i
         logger.info(f"Fold {i + 1}/{args.repeat_time}, SEED:{current_seed}, device:{args.device}")
-        main(args, current_seed)
+        metrics = main(args, current_seed)
+        all_metrics.append(metrics)
         logger.info(f"Fold {i + 1} is done!")
+        
+    logger.info("==== Summary across repeats (mean ± std) ====")
+    for name in all_metrics[0].keys():
+        values = np.array([m[name] for m in all_metrics])
+        logger.info(f"{name}: {values.mean():.4f} ± {values.std():.4f}")    
     logging.info(f"Done!")
