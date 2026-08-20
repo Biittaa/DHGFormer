@@ -4,7 +4,7 @@ import torch.utils.data as utils
 import csv
 import re
 
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 from nilearn.connectome import ConnectivityMeasure
 from sklearn import preprocessing
 import pandas as pd
@@ -196,31 +196,94 @@ def init_dataloader(dataset_config):
         raw["node_size"], raw["node_feature_size"], raw["timeseries"], raw["smri_dim"]
 
 
-def get_kfold_split_indices(labels_np, kfold, fold_idx, val_ratio=0.1, seed=123):
-    """Real stratified k-fold: (kfold-1)/kfold of the data is train+val,
-    1/kfold is held out as test for this fold. train+val is further split
-    into train/val by val_ratio, with a fixed RNG so it's reproducible
-    per fold."""
+# def get_kfold_split_indices(labels_np, kfold, fold_idx, val_ratio=0.1, seed=123):
+#     """Real stratified k-fold: (kfold-1)/kfold of the data is train+val,
+#     1/kfold is held out as test for this fold. train+val is further split
+#     into train/val by val_ratio, with a fixed RNG so it's reproducible
+#     per fold."""
+#     labels_flat = np.asarray(labels_np).reshape(-1)
+
+#     skf = StratifiedKFold(n_splits=kfold, shuffle=True, random_state=seed)
+#     splits = list(skf.split(np.zeros(len(labels_flat)), labels_flat))
+
+#     if not (0 <= fold_idx < kfold):
+#         raise ValueError(f"fold_idx must be in [0, {kfold}), got {fold_idx}")
+
+#     train_val_idx, test_idx = splits[fold_idx]
+
+#     rng = np.random.RandomState(seed + fold_idx)
+#     shuffled = train_val_idx.copy()
+#     rng.shuffle(shuffled)
+
+#     val_size = max(1, int(round(len(shuffled) * val_ratio)))
+#     val_idx = shuffled[:val_size]
+#     train_idx = shuffled[val_size:]
+
+#     return train_idx, val_idx, test_idx
+
+
+def get_kfold_split_indices(labels_np, kfold, fold_idx,
+                            val_ratio=0.1, seed=123):
+    """
+    Fully stratified K-Fold split:
+
+    Stage 1:
+        Stratified K-Fold
+        → Test = 1/kfold of total data
+
+    Stage 2:
+        Stratified split of remaining data
+        → Validation = val_ratio of Train+Validation
+        → Train = remaining samples
+    """
+
     labels_flat = np.asarray(labels_np).reshape(-1)
 
-    skf = StratifiedKFold(n_splits=kfold, shuffle=True, random_state=seed)
-    splits = list(skf.split(np.zeros(len(labels_flat)), labels_flat))
-
     if not (0 <= fold_idx < kfold):
-        raise ValueError(f"fold_idx must be in [0, {kfold}), got {fold_idx}")
+        raise ValueError(
+            f"fold_idx must be in [0, {kfold}), got {fold_idx}"
+        )
+
+    # ==========================================
+    # Stage 1: Stratified K-Fold for Test
+    # ==========================================
+    outer_skf = StratifiedKFold(
+        n_splits=kfold,
+        shuffle=True,
+        random_state=seed
+    )
+
+    splits = list(
+        outer_skf.split(
+            np.zeros(len(labels_flat)),
+            labels_flat
+        )
+    )
 
     train_val_idx, test_idx = splits[fold_idx]
 
-    rng = np.random.RandomState(seed + fold_idx)
-    shuffled = train_val_idx.copy()
-    rng.shuffle(shuffled)
+    # ==========================================
+    # Stage 2: Stratified split for Validation
+    # ==========================================
+    train_val_labels = labels_flat[train_val_idx]
 
-    val_size = max(1, int(round(len(shuffled) * val_ratio)))
-    val_idx = shuffled[:val_size]
-    train_idx = shuffled[val_size:]
+    inner_splitter = StratifiedShuffleSplit(
+        n_splits=1,
+        test_size=val_ratio,
+        random_state=seed + fold_idx
+    )
+
+    train_relative_idx, val_relative_idx = next(
+        inner_splitter.split(
+            np.zeros(len(train_val_idx)),
+            train_val_labels
+        )
+    )
+
+    train_idx = train_val_idx[train_relative_idx]
+    val_idx = train_val_idx[val_relative_idx]
 
     return train_idx, val_idx, test_idx
-
 
 def init_dataloader_kfold(dataset_config, fold_idx, kfold=5, val_ratio=0.1, seed=123):
     """Real stratified k-fold cross validation loader.

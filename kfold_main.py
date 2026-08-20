@@ -10,12 +10,11 @@ import logging
 
 from train import BasicTrain
 from model.DHGFormer import DHGFormer
-from dataloader import init_dataloader_kfold
+from kfold_dataloader import init_dataloader_kfold
 from util import Logger_main
 
 
 def main(args, config, fold_idx, kfold, base_seed):
-    # هر fold با یک seed ثابت و قابل بازتولید اجرا می‌شود
     current_seed = base_seed + fold_idx
     random.seed(current_seed)
     np.random.seed(current_seed)
