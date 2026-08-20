@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder, ModalityAttentionFusion
+from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion
 import pickle
 
 
@@ -236,15 +236,39 @@ class DHGFormer(nn.Module):
         self.predictor = CrossGCNPredictor(node_feature_dim, roi_num=roi_num)
         
         if self.use_smri:
-            smri_hid_1 = model_config.get('smri_hid_1', 500)
+            # smri_hid_1 = model_config.get('smri_hid_1', 500)
             smri_hid_2 = model_config.get('smri_hid_2', 30)
             smri_dropout = model_config.get('smri_dropout', 0.5)
-            self.smri_encoder = SMRIFCNEncoder(
-                input_dim=smri_input_dim,
-                hid_1=smri_hid_1,
-                hid_2=smri_hid_2,
-                dropout=smri_dropout
-            )
+            smri_encoder_type = model_config.get('smri_encoder_type', 'fcn')
+            
+            if smri_encoder_type == 'transformer':
+                smri_patch_size = model_config.get('smri_patch_size', 32)
+                smri_embed_dim = model_config.get('smri_embed_dim', 64)
+                smri_num_heads = model_config.get('smri_num_heads', 4)
+                smri_num_layers = model_config.get('smri_num_layers', 2)
+                self.smri_encoder = SMRITransformerEncoder(
+                    input_dim=smri_input_dim,
+                    patch_size=smri_patch_size,
+                    embed_dim=smri_embed_dim,
+                    num_heads=smri_num_heads,
+                    num_layers=smri_num_layers,
+                    hid_2=smri_hid_2,
+                    dropout=smri_dropout
+                )
+            else:
+                smri_hid_1 = model_config.get('smri_hid_1', 500)
+                self.smri_encoder = SMRIFCNEncoder(
+                    input_dim=smri_input_dim,
+                    hid_1=smri_hid_1,
+                    hid_2=smri_hid_2,
+                    dropout=smri_dropout
+                )
+            # self.smri_encoder = SMRIFCNEncoder(
+            #     input_dim=smri_input_dim,
+            #     hid_1=smri_hid_1,
+            #     hid_2=smri_hid_2,
+            #     dropout=smri_dropout
+            # )
             fmri_embed_dim = 8 * roi_num
             fusion_input_dim = fmri_embed_dim + smri_hid_2
             if self.fusion_method == 'attention':

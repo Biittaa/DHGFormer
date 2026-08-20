@@ -154,3 +154,56 @@ class ModalityAttentionFusion(nn.Module):
 
         fused = torch.cat([w_f * fmri_emb, w_s * smri_emb], dim=1)
         return fused, weights     
+    
+    
+    
+    
+    
+    
+class SMRITransformerEncoder(torch.nn.Module):
+    """Lightweight Transformer sMRI encoder. Splits the raw feature vector
+    into small patches (tokens) instead of treating every feature as its
+    own token, so attention stays cheap even without Ridge-RFE feature
+    selection. Output dim = hid_2, so it drops into fusion_classifier
+    unchanged."""
+
+    def __init__(self, input_dim, patch_size=32, embed_dim=64,
+                 num_heads=4, num_layers=2, hid_2=30, dropout=0.1):
+        super().__init__()
+        self.patch_size = patch_size
+        self.num_patches = (input_dim + patch_size - 1) // patch_size
+        self.pad_len = self.num_patches * patch_size - input_dim
+
+        self.patch_proj = torch.nn.Linear(patch_size, embed_dim)
+        self.cls_token = torch.nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = torch.nn.Parameter(
+            torch.zeros(1, self.num_patches + 1, embed_dim))
+        torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        torch.nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=num_heads,
+            dim_feedforward=embed_dim * 2, dropout=dropout,
+            batch_first=True)
+        self.transformer = torch.nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers)
+
+        self.out_proj = torch.nn.Linear(embed_dim, hid_2)
+        self.dropout = torch.nn.Dropout(dropout)
+
+    def forward(self, x):
+        b = x.shape[0]
+        if self.pad_len > 0:
+            pad = torch.zeros(b, self.pad_len, device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad], dim=1)
+
+        patches = x.view(b, self.num_patches, self.patch_size)
+        tokens = self.patch_proj(patches)
+
+        cls = self.cls_token.expand(b, -1, -1)
+        tokens = torch.cat([cls, tokens], dim=1)
+        tokens = tokens + self.pos_embed
+
+        out = self.transformer(tokens)
+        cls_out = out[:, 0, :]
+        return self.dropout(self.out_proj(cls_out))
