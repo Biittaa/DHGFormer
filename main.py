@@ -12,9 +12,11 @@ from train import BasicTrain
 from model.DHGFormer import DHGFormer
 from dataloader import init_dataloader
 from util import Logger_main
+from datetime import datetime
+import json
 
 
-def main(args, current_seed):
+def main(args, current_seed, run_id, repeat_idx):
     with open(args.config_filename) as f:
         config = yaml.load(f, Loader=yaml.Loader)
         random.seed(current_seed)
@@ -49,9 +51,18 @@ def main(args, current_seed):
         if config['train']["sparsity_loss"]:
             loss_name = f"{loss_name}_sparsity_loss"
 
-        save_folder_name = Path(config['train']['log_folder']) / Path(config['model']['type']) / Path(
-            f"{config['data']['dataset']}_{config['data']['atlas']}")
+        # save_folder_name = Path(config['train']['log_folder']) / Path(config['model']['type']) / Path(
+        #     f"{config['data']['dataset']}_{config['data']['atlas']}")
 
+        save_folder_name = (
+            Path(config['train']['log_folder'])
+            / Path(config['model']['type'])
+            / Path(f"{config['data']['dataset']}_{config['data']['atlas']}")
+            / Path("repeated_runs")
+            / Path(f"run_{run_id}")
+            / Path(f"repeat_{repeat_idx + 1}")
+        )
+        
         train_process = use_train(
             config['train'], model, opts, dataloaders, save_folder_name)
 
@@ -84,17 +95,42 @@ if __name__ == '__main__':
     with open(args.config_filename) as f:
         config = yaml.load(f, Loader=yaml.Loader)
         logger.info(f"Model {config['model']['type']} on {config['data']['dataset']} Dataset")
-        
+    run_id = datetime.now().strftime("%Y%m%d-%H%M%S")    
     all_metrics = []    
     for i in range(args.repeat_time):
         current_seed = seed + i
         logger.info(f"Fold {i + 1}/{args.repeat_time}, SEED:{current_seed}, device:{args.device}")
-        metrics = main(args, current_seed)
+        metrics = main(args, current_seed, run_id,i)
         all_metrics.append(metrics)
         logger.info(f"Fold {i + 1} is done!")
         
     logger.info("==== Summary across repeats (mean ± std) ====")
     for name in all_metrics[0].keys():
         values = np.array([m[name] for m in all_metrics])
-        logger.info(f"{name}: {values.mean():.4f} ± {values.std():.4f}")    
+        logger.info(f"{name}: {values.mean():.4f} ± {values.std():.4f}")  
+        
+        
+    summary = {
+        name: {
+            "mean": float(np.mean([m[name] for m in all_metrics])),
+            "std": float(np.std([m[name] for m in all_metrics]))
+        }
+        for name in all_metrics[0].keys()
+    }
+
+    run_dir = (
+        Path(config['train']['log_folder'])
+        / config['model']['type']
+        / f"{config['data']['dataset']}_{config['data']['atlas']}"
+        / "repeated_runs"
+        / f"run_{run_id}"
+    )
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(run_dir / "run_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+
+    logging.info(f"Results saved in: {run_dir}")
+    logging.info("Done!")  
     logging.info(f"Done!")

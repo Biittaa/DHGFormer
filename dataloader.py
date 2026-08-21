@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from nilearn import plotting, datasets
 import random
+from sklearn.linear_model import RidgeClassifier
+from sklearn.feature_selection import RFE
 
 class StandardScaler:
     """
@@ -27,7 +29,45 @@ class StandardScaler:
 
     def inverse_transform(self, data):
         return (data * self.std) + self.mean
+    
+    
+def smri_ridge_feature_selection(smri_features, labels_np, train_idx, n_features):
+    labels_flat = np.asarray(labels_np).reshape(-1)
+    n_features = min(n_features, smri_features.shape[1])
 
+    estimator = RidgeClassifier()
+    selector = RFE(estimator, n_features_to_select=n_features, step=100, verbose=1)
+    selector.fit(smri_features[train_idx, :], labels_flat[train_idx])
+
+    print(f"sMRI Ridge-RFE: kept {n_features} of {smri_features.shape[1]} features")
+    return selector.transform(smri_features)
+
+
+def sliding_window_corr(fc_all, window, stride):
+    N, ROI, T = fc_all.shape
+    if window > T:
+        window = T
+    starts = list(range(0, T - window + 1, stride))
+    if len(starts) == 0:
+        starts = [0]
+    W = len(starts)
+
+    fc_windows = np.zeros((N, W, ROI, window), dtype=fc_all.dtype)
+    corr_windows = np.zeros((N, W, ROI, ROI), dtype=np.float64)
+
+    conn_measure = ConnectivityMeasure(kind='correlation')
+
+    for i in range(N):
+        for w_idx, start in enumerate(starts):
+            seg = fc_all[i, :, start:start + window]
+            fc_windows[i, w_idx] = seg
+            c = conn_measure.fit_transform([seg.T])[0]
+            c = np.arctanh(np.clip(c, -0.999999, 0.999999))
+            c = np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+            corr_windows[i, w_idx] = c
+
+    print(f"[sliding_window_corr] T={T}, window={window}, stride={stride} -> {W} windows/subject")
+    return fc_windows, corr_windows, W
 
 def load_smri_features(dataset_config, num_subjects):
     """Load sMRI tabular features (abide_smri.csv style) and align them,
@@ -163,9 +203,17 @@ def init_dataloader(dataset_config):
     
     final_fc = scaler.transform(final_fc)
 
+    # use_temporal = dataset_config.get("use_temporal_window", False)
+    # if use_temporal:
+    #     window = dataset_config.get("window_size", 30)
+    #     stride = dataset_config.get("window_stride", 10)
+    #     final_fc, final_pearson, num_windows = sliding_window_corr(final_fc, window, stride)
+    #     timeseries = final_fc.shape[-1]
+    
 
     pseudo = []
     for i in range(len(final_fc)):
+        # pseudo.append(np.diag(np.ones(node_size)))
         pseudo.append(np.diag(np.ones(final_pearson.shape[1])))
 
     if 'cc200' in  dataset_config['atlas']:

@@ -13,8 +13,11 @@ from model.DHGFormer import DHGFormer
 from kfold_dataloader import init_dataloader_kfold
 from util import Logger_main
 
+from datetime import datetime
+import json
 
-def main(args, config, fold_idx, kfold, base_seed):
+
+def main(args, config, fold_idx, kfold, base_seed, run_id):
     current_seed = base_seed + fold_idx
     random.seed(current_seed)
     np.random.seed(current_seed)
@@ -47,9 +50,11 @@ def main(args, config, fold_idx, kfold, base_seed):
         weight_decay=config['train']['weight_decay'])
     opts = (optimizer,)
 
-    save_folder_name = Path(config['train']['log_folder']) / Path(config['model']['type']) / Path(
-        f"{config['data']['dataset']}_{config['data']['atlas']}") / Path(f"fold_{fold_idx+1}")
+    # save_folder_name = Path(config['train']['log_folder']) / Path(config['model']['type']) / Path(
+    #     f"{config['data']['dataset']}_{config['data']['atlas']}") / Path(f"fold_{fold_idx+1}")
 
+    save_folder_name = Path(config['train']['log_folder']) / Path(config['model']['type']) / Path(f"{config['data']['dataset']}_{config['data']['atlas']}") / "kfold_runs"/ Path(f"run_{run_id}") / Path(f"fold_{fold_idx+1}")
+    
     train_process = BasicTrain(
         config['train'], model, opts, dataloaders, save_folder_name)
 
@@ -87,13 +92,16 @@ if __name__ == '__main__':
 
     logger.info(f"Model {config['model']['type']} on {config['data']['dataset']} Dataset")
     logger.info(f"Running real Stratified {kfold}-Fold Cross Validation, base seed:{seed}")
-
+    
+    run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # logger.info(f"Run ID: {run_id}")
+    
     all_fold_metrics = []
     for fold_idx in range(kfold):
         logger.info(f"Fold {fold_idx + 1}/{kfold}, base_seed:{seed}, device:{args.device}")
         with open(args.config_filename) as f:
             config = yaml.load(f, Loader=yaml.Loader)  # fresh copy per fold
-        fold_metrics = main(args, config, fold_idx, kfold, seed)
+        fold_metrics = main(args, config, fold_idx, kfold, seed, run_id)
         all_fold_metrics.append(fold_metrics)
         logger.info(f"Fold {fold_idx + 1} is done!")
         
@@ -102,5 +110,15 @@ if __name__ == '__main__':
     for name in all_fold_metrics[0].keys():
         values = np.array([m[name] for m in all_fold_metrics])
         logger.info(f"{name}: {values.mean():.4f} ± {values.std():.4f}")
+        
+    summary = {
+    name: {"mean": float(np.mean([m[name] for m in all_fold_metrics])),
+           "std": float(np.std([m[name] for m in all_fold_metrics]))}
+    for name in all_fold_metrics[0].keys()
+    }
+    run_dir = Path(config['train']['log_folder']) / config['model']['type'] / \
+        f"{config['data']['dataset']}_{config['data']['atlas']}" / f"run_{run_id}"
+    with open(run_dir / "run_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
 
     logging.info(f"Done!")
