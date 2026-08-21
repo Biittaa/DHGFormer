@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder
+from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder, TemporalLSTMEncoder
 import pickle
 
 
@@ -238,19 +238,38 @@ class DHGFormer(nn.Module):
         self.use_temporal = model_config.get('temporal_encoder_type', 'none') != 'none'
         if self.use_temporal:
             window_proj_dim = model_config.get('window_proj_dim', 128)
-            temporal_num_heads = model_config.get('temporal_num_heads', 4)
-            temporal_num_layers = model_config.get('temporal_num_layers', 2)
-            temporal_dropout = model_config.get('temporal_dropout', 0.1)
+            # temporal_num_heads = model_config.get('temporal_num_heads', 4)
+            # temporal_num_layers = model_config.get('temporal_num_layers', 2)
+            # temporal_dropout = model_config.get('temporal_dropout', 0.1)
             max_windows = model_config.get('max_windows', 64)
 
             self.window_proj = nn.Linear(8 * roi_num, window_proj_dim)
-            self.temporal_encoder = TemporalTransformerEncoder(
-                embed_dim=window_proj_dim,
-                num_heads=temporal_num_heads,
-                num_layers=temporal_num_layers,
-                max_windows=max_windows,
-                dropout=temporal_dropout
-            )
+            temporal_type = model_config.get('temporal_encoder_type', 'transformer')
+            if temporal_type == 'transformer':
+                temporal_num_heads = model_config.get('temporal_num_heads', 4)
+                temporal_num_layers = model_config.get('temporal_num_layers', 2)
+                temporal_dropout = model_config.get('temporal_dropout', 0.1)
+                self.temporal_encoder = TemporalTransformerEncoder(
+                    embed_dim=window_proj_dim,
+                    num_heads=temporal_num_heads,
+                    num_layers=temporal_num_layers,
+                    max_windows=max_windows,
+                    dropout=temporal_dropout
+                )
+            elif temporal_type == 'lstm':
+                lstm_hidden = model_config.get('temporal_lstm_hidden', 64)
+                lstm_layers = model_config.get('temporal_lstm_layers', 1)
+                lstm_bidir = model_config.get('temporal_lstm_bidirectional', True)
+                temporal_dropout = model_config.get('temporal_dropout', 0.1)
+                self.temporal_encoder = TemporalLSTMEncoder(
+                    embed_dim=window_proj_dim,
+                    hidden_dim=lstm_hidden,
+                    num_layers=lstm_layers,
+                    bidirectional=lstm_bidir,
+                    dropout=temporal_dropout
+                )
+            else:
+                raise ValueError(f"Unknown temporal_encoder_type: {temporal_type}")
             self.temporal_classifier = nn.Sequential(
                 nn.Linear(window_proj_dim, 32),
                 nn.LeakyReLU(negative_slope=0.2),

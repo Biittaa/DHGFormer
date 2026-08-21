@@ -11,11 +11,14 @@ data:
   use_smri_ridge_fs: false
   smri_ridge_num_features: 1435
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
+  # time_seires: D:/Desk/Brain Graph/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
+  # time_series_subjects_order: D:/Desk/Brain Graph/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
+  # smri_path: D:/Desk/Brain Graph/DHGFormer/abide_smri.csv
   use_temporal_window: true
-  window_size: 30
-  window_stride: 10
+  window_size: 50
+  window_stride: 20
   
 
 model:
@@ -40,13 +43,17 @@ model:
   smri_dropout: 0.5
 
 
-  temporal_encoder_type: transformer   
+  temporal_encoder_type: lstm   
   window_proj_dim: 128       
   temporal_num_heads: 4
   temporal_num_layers: 2
   temporal_dropout: 0.1
   max_windows: 64
 
+
+  temporal_lstm_hidden: 64
+  temporal_lstm_layers: 1
+  temporal_lstm_bidirectional: true
 
 
 train:

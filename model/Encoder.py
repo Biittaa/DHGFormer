@@ -240,3 +240,35 @@ class TemporalTransformerEncoder(torch.nn.Module):
         tokens = tokens + self.pos_embed[:, :w + 1]
         out = self.transformer(tokens)
         return self.dropout(out[:, 0, :])            # [B, D]
+
+
+
+class TemporalLSTMEncoder(torch.nn.Module):
+
+    def __init__(self, embed_dim, hidden_dim=64, num_layers=1,
+                 bidirectional=True, dropout=0.1):
+        super().__init__()
+        self.lstm = torch.nn.LSTM(
+            input_size=embed_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional,
+            dropout=dropout if num_layers > 1 else 0.0
+        )
+        lstm_out_dim = hidden_dim * (2 if bidirectional else 1)
+        self.out_proj = torch.nn.Linear(lstm_out_dim, embed_dim)
+        self.dropout = torch.nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: [B, W, D]
+        out, (h_n, c_n) = self.lstm(x)
+        # h_n: [num_layers*num_directions, B, hidden_dim]
+        if self.lstm.bidirectional:
+            last_fwd = h_n[-2]   # آخرین لایه، جهت forward
+            last_bwd = h_n[-1]   # آخرین لایه، جهت backward
+            pooled = torch.cat([last_fwd, last_bwd], dim=1)   # [B, hidden_dim*2]
+        else:
+            pooled = h_n[-1]     # [B, hidden_dim]
+
+        return self.dropout(self.out_proj(pooled))   # [B, embed_dim]
