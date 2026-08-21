@@ -12,6 +12,7 @@ from util.loss import mixup_cluster_loss
 from sklearn.metrics import roc_auc_score, confusion_matrix
 from datetime import datetime
 import json
+import copy
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -174,8 +175,8 @@ class BasicTrain:
         np.save(logs_dir / "training_process.npy", results, allow_pickle=True)
         with open(logs_dir / "training_info.txt", 'a', encoding='utf-8') as f:
             f.write(txt)
-        torch.save(self.best_model.state_dict(), weights_dir / "model_best.pt")
-
+        # torch.save(self.best_model.state_dict(), weights_dir / "model_best.pt")
+        torch.save(self.best_model_state, weights_dir / "model_best.pt")
         metrics = {
             "best_train_acc": self.best_train_acc, "best_train_loss": self.best_train_loss,
             "best_acc_val": self.best_acc_val, "best_auc_val": self.best_auc_val,
@@ -253,6 +254,7 @@ class BasicTrain:
         self.logger.info(" | ".join([
             f'Best_ACC[{self.best_acc}]'
         ]))
+        self.model.load_state_dict(self.best_model_state)
         if self.save_learnable_graph:
             self.generate_save_learnable_matrix()
             try:
