@@ -11,6 +11,7 @@ from util.prepossess import mixup_criterion, mixup_data
 from util.loss import mixup_cluster_loss
 from sklearn.metrics import roc_auc_score, confusion_matrix
 from datetime import datetime
+import json
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -118,9 +119,26 @@ class BasicTrain:
         con_matrix = confusion_matrix(labels, result)
         return [auc] + list(metric), con_matrix
 
+    # def generate_save_learnable_matrix(self):
+    #     learable_matrixs = []
+
+    #     labels = []
+
+    #     for data_in, nodes, label, _, smri in self.test_dataloader:
+    #         label = label.long()
+    #         data_in, nodes, label, smri = data_in.to(
+    #             device), nodes.to(device), label.to(device), smri.to(device)
+    #         _, learable_matrix, _ = self.model(data_in, nodes, smri)
+
+    #         learable_matrixs.append(learable_matrix.cpu().detach().numpy())
+    #         labels += label.tolist()
+
+    #     self.save_path.mkdir(exist_ok=True, parents=True)
+    #     np.save(self.save_path / "learnable_matrix.npy", {'matrix': np.vstack(
+    #         learable_matrixs), "label": np.array(labels)}, allow_pickle=True)
+
     def generate_save_learnable_matrix(self):
         learable_matrixs = []
-
         labels = []
 
         for data_in, nodes, label, _, smri in self.test_dataloader:
@@ -132,19 +150,44 @@ class BasicTrain:
             learable_matrixs.append(learable_matrix.cpu().detach().numpy())
             labels += label.tolist()
 
-        self.save_path.mkdir(exist_ok=True, parents=True)
-        np.save(self.save_path / "learnable_matrix.npy", {'matrix': np.vstack(
+        matrices_dir = self.save_path / "matrices"
+        matrices_dir.mkdir(exist_ok=True, parents=True)
+        np.save(matrices_dir / "learnable_matrix.npy", {'matrix': np.vstack(
             learable_matrixs), "label": np.array(labels)}, allow_pickle=True)
+        
+        
+    # def save_result(self, results, txt):
+
+    #     self.save_path.mkdir(exist_ok=True, parents=True)
+    #     np.save(self.save_path/"training_process.npy",
+    #             results, allow_pickle=True)
+    #     with open(self.save_path / "training_info.txt", 'a', encoding='utf-8') as f:
+    #         f.write(txt)
+    #     torch.save(self.best_model.state_dict(), self.save_path/f"model_{self.best_acc}%.pt")
 
     def save_result(self, results, txt):
+        logs_dir = self.save_path / "logs"
+        weights_dir = self.save_path / "weights"
+        logs_dir.mkdir(exist_ok=True, parents=True)
+        weights_dir.mkdir(exist_ok=True, parents=True)
 
-        self.save_path.mkdir(exist_ok=True, parents=True)
-        np.save(self.save_path/"training_process.npy",
-                results, allow_pickle=True)
-        with open(self.save_path / "training_info.txt", 'a', encoding='utf-8') as f:
+        np.save(logs_dir / "training_process.npy", results, allow_pickle=True)
+        with open(logs_dir / "training_info.txt", 'a', encoding='utf-8') as f:
             f.write(txt)
-        torch.save(self.best_model.state_dict(), self.save_path/f"model_{self.best_acc}%.pt")
+        torch.save(self.best_model.state_dict(), weights_dir / "model_best.pt")
 
+        metrics = {
+            "best_train_acc": self.best_train_acc, "best_train_loss": self.best_train_loss,
+            "best_acc_val": self.best_acc_val, "best_auc_val": self.best_auc_val,
+            "best_acc_test": self.best_acc, "best_auc_test": self.best_auc_test,
+            "best_sen": self.best_sen, "best_spe": self.best_spe, "best_f1": self.best_f1,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with open(self.save_path / "metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+    
+    
+    
     def train(self):
         training_process = []
         txt = ''
@@ -176,6 +219,7 @@ class BasicTrain:
                 self.best_acc_val = self.val_accuracy.avg
                 self.best_auc_val = val_result[0]
                 self.best_model = self.model
+                self.best_model_state = copy.deepcopy(self.model.state_dict())
 
                 self.best_acc = self.test_accuracy.avg
                 self.best_auc_test = test_result[0]
@@ -211,7 +255,18 @@ class BasicTrain:
         ]))
         if self.save_learnable_graph:
             self.generate_save_learnable_matrix()
+            try:
+                from explainability import ExplainabilityReport
+                ExplainabilityReport(self.save_path).run_all()
+            except Exception as e:
+                self.logger.info(f"[explainability] skipped: {e}")
         self.save_result(training_process, txt)
+        # self.logger.info(" | ".join([
+        #     f'Best_ACC[{self.best_acc}]'
+        # ]))
+        # if self.save_learnable_graph:
+        #     self.generate_save_learnable_matrix()
+        # self.save_result(training_process, txt)
         
         return {
                 'train_acc': self.best_train_acc,
