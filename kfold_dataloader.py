@@ -42,12 +42,18 @@ def sliding_window_corr(fc_all, window, stride):
 
     fc_windows = np.zeros((N, W, ROI, window), dtype=fc_all.dtype)
     corr_windows = np.zeros((N, W, ROI, ROI), dtype=np.float64)
+    
+    conn_measure = ConnectivityMeasure(kind='correlation')
 
     for i in range(N):
         for w_idx, start in enumerate(starts):
             seg = fc_all[i, :, start:start + window]
             fc_windows[i, w_idx] = seg
-            c = np.corrcoef(seg)
+            # c = np.corrcoef(seg)
+            # c = conn_measure.fit_transform([seg.T])[0] 
+            # c = np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+            c = conn_measure.fit_transform([seg.T])[0]
+            c = np.arctanh(np.clip(c, -0.999999, 0.999999))   
             c = np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
             corr_windows[i, w_idx] = c
 
