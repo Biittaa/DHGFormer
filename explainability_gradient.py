@@ -47,7 +47,8 @@ from scipy import stats
 
 from model.DHGFormer import DHGFormer
 from explainability import (
-    SUBNETWORK_ENDS, _subnetwork_slices, load_network_names, load_roi_names
+    SUBNETWORK_ENDS, _subnetwork_slices, load_network_names, load_roi_names,
+    guess_node_clus_map_path, rank_networks_by_importance, plot_network_ranking,
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -144,7 +145,7 @@ class GradientExplainabilityReport:
     """Mirrors the structure of explainability.ExplainabilityReport but
     operates on gradient-based saliency instead of the learned adjacency."""
 
-    def __init__(self, model, test_dataloader, out_dir, node_clus_map_path,
+    def __init__(self, model, test_dataloader, out_dir, node_clus_map_path=None,
                  subnetwork_ends=SUBNETWORK_ENDS, method="ig", ig_steps=50,
                  target="predicted"):
         self.model = model.to(device)
@@ -155,8 +156,26 @@ class GradientExplainabilityReport:
         self.method = method              # "ig" or "saliency"
         self.ig_steps = ig_steps
         self.target = target              # "predicted" or "true"
-        self.network_names = load_network_names(node_clus_map_path, subnetwork_ends)
-        self.roi_names = load_roi_names(node_clus_map_path)
+
+        # Resolve node_clus_map.pickle the same way Stage-1 does: if the
+        # caller passed an explicit path use it, otherwise search out_dir
+        # and its parents (so it works regardless of CWD).
+        resolved_path = Path(node_clus_map_path) if node_clus_map_path else \
+            guess_node_clus_map_path(self.out_dir)
+        print(f"[GradientExplainabilityReport] using node_clus_map: '{resolved_path}'")
+
+        self.network_names = load_network_names(resolved_path, subnetwork_ends)
+        self.roi_names = load_roi_names(resolved_path)
+
+        # Persist what was actually resolved so the Yeo-network mapping is
+        # inspectable as data, not just as tick labels baked into a PNG.
+        with open(self.out_dir / "network_roi_mapping.json", "w") as f:
+            json.dump({
+                "node_clus_map_path": str(resolved_path),
+                "network_names": list(self.network_names),
+                "roi_names": list(self.roi_names) if self.roi_names is not None else None,
+                "subnetwork_ends": list(self.subnetwork_ends),
+            }, f, indent=2, ensure_ascii=False)
 
         self.saliency_maps = None
         self.labels = None
@@ -280,7 +299,36 @@ class GradientExplainabilityReport:
         plt.tight_layout()
         fig.savefig(self.out_dir / f"{self.method}_subnetwork_summary.png", dpi=200)
         plt.close(fig)
+
+        # persist the numbers + labels, not just the plot
+        np.savez(self.out_dir / f"{self.method}_subnetwork_summary.npz",
+                 **{f"class_{c}": mat for c, mat in result.items()},
+                 network_names=np.array(self.network_names, dtype=object))
+        with open(self.out_dir / f"{self.method}_subnetwork_summary.json", "w") as f:
+            json.dump({
+                "network_names": list(self.network_names),
+                "matrices": {str(c): mat.tolist() for c, mat in result.items()}
+            }, f, indent=2, ensure_ascii=False)
         return result
+
+    # ---- 3b. Yeo-network-level importance ranking ----
+    def network_ranking(self, top_k=20):
+        """Which of the 8 Yeo(+subcortical) networks matter most, aggregating
+        the same per-ROI |group-difference of saliency| score used in
+        roi_ranking() up to network level. See
+        explainability.rank_networks_by_importance() for the criteria."""
+        diff, _, _ = self.group_difference()
+        node_score = np.abs(diff).sum(axis=1)
+        ranking = rank_networks_by_importance(
+            node_score, self.subnetwork_ends, self.network_names, top_k=top_k)
+
+        plot_network_ranking(
+            ranking, self.out_dir / f"{self.method}_network_ranking.png",
+            title=f"Yeo network importance ranking ({self.method.upper()} saliency)")
+
+        with open(self.out_dir / f"{self.method}_network_ranking.json", "w") as f:
+            json.dump(ranking, f, indent=2, ensure_ascii=False)
+        return ranking
 
     # ---- 4. discriminative ROI ranking ----
     def roi_ranking(self, top_k=20):
@@ -339,6 +387,7 @@ class GradientExplainabilityReport:
         self.group_difference()
         self.subnetwork_summary()
         self.roi_ranking()
+        self.network_ranking()
         self.connectogram()
         acc = float(np.mean(self.predicted == self.labels))
         print(f"[explainability_gradient] test-set accuracy while attributing: {acc:.3f}")
@@ -352,10 +401,8 @@ class GradientExplainabilityReport:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_filename", default="setting/abide_DHGFormer.yaml")
-    parser.add_argument("--checkpoint", required=True,
-                        help="path to the model_XX%.pt saved by BasicTrain.save_result()")
-    parser.add_argument("--out_dir", required=True,
-                        help="e.g. .../fold_1/explainability_gradient")
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--out_dir", required=True)
     parser.add_argument("--mode", choices=["kfold", "repeat"], default="kfold")
     parser.add_argument("--fold_idx", type=int, default=0)
     parser.add_argument("--kfold", type=int, default=5)
@@ -365,7 +412,10 @@ def main():
     parser.add_argument("--method", choices=["ig", "saliency"], default="ig")
     parser.add_argument("--ig_steps", type=int, default=50)
     parser.add_argument("--target", choices=["predicted", "true"], default="predicted")
-    parser.add_argument("--node_clus_map", default="node_clus_map.pickle")
+    parser.add_argument("--node_clus_map", default=None,
+                        help="Path to node_clus_map.pickle. If omitted, the "
+                             "script searches out_dir and its parent "
+                             "directories for it (same logic as Stage-1).")
     parser.add_argument("--device", type=int, default=0)
     args = parser.parse_args()
 

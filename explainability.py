@@ -31,10 +31,96 @@ from scipy import stats
 SUBNETWORK_ENDS = [41, 70, 91, 110, 130, 137, 158, 200]
 DEFAULT_NETWORK_NAMES = [f"Net-{i + 1}" for i in range(len(SUBNETWORK_ENDS))]
 
+# This project's node_clus_map.pickle is the same file used in the
+# Com-BrainTF repo (ubc-tea/Com-BrainTF, Bannadabhavi et al., MICCAI 2023) --
+# verified byte-for-byte identical. Its dict values are integer community ids
+# (0..7), not strings. That paper (Sec 3.1) states the eight communities are,
+# in this exact order: cerebellum/subcortical, visual, somatomotor, dorsal
+# attention, ventral attention, limbic, frontoparietal, DMN -- matching the
+# same order shown in the community-id -> ROI-count signature below (community
+# id N has KNOWN_CLUSTER_SIZE_SIGNATURE[N] ROIs). We only apply these names
+# when the sizes match exactly, so an unrelated node_clus_map.pickle won't
+# silently get mislabeled.
+KNOWN_CLUSTER_SIZE_SIGNATURE = [41, 29, 21, 19, 20, 7, 21, 42]
+KNOWN_CLUSTER_NAMES = [
+    "Subcortical-Cerebellum", "Visual", "Somatomotor", "DorsalAttention",
+    "VentralAttention", "Limbic", "Frontoparietal", "DMN",
+]
+
 
 def _subnetwork_slices(subnetwork_ends):
     starts = [0] + subnetwork_ends[:-1]
     return list(zip(starts, subnetwork_ends))
+
+
+def rank_networks_by_importance(node_score, subnetwork_ends, network_names, top_k=20):
+    """Aggregate per-ROI importance scores (e.g. |group-difference| row-sum,
+    or |saliency| node strength) up to the Yeo-network/subnetwork level, using
+    the aggregation strategies most commonly reported in the brain-network
+    literature (e.g. BrainGNN, Com-BrainTF, BrainNetTransformer, FBNetGen):
+
+      - mean_importance: average per-ROI importance *within* the network.
+        This is the primary, size-normalized ranking -- it does not
+        automatically favor a larger network (DMN, 42 ROIs here) over a
+        smaller one (Limbic, 7 ROIs) just because it has more nodes, which
+        a raw sum would.
+      - sum_importance: total importance mass contributed by the network
+        (does scale with network size; useful for "how much of the overall
+        signal comes from here").
+      - topk_count / topk_fraction: how many of the global top-`top_k` most
+        important ROIs fall inside this network. This is the metric papers
+        typically use informally when they report findings as "mainly
+        localizing to network X" (e.g. DHGFormer's own Fig. 2(b) discussion
+        of DMN-localized discriminative ROIs).
+
+    Returns a list of one dict per network, sorted by descending
+    mean_importance (the primary/default ranking), each dict also carrying
+    its rank under every metric so you can cross-check which criterion you
+    prefer.
+    """
+    slices = _subnetwork_slices(subnetwork_ends)
+    node_score = np.asarray(node_score)
+    top_k = min(top_k, len(node_score))
+    order_topk = np.argsort(-node_score)[:top_k]
+
+    rows = []
+    for idx, (s, e) in enumerate(slices):
+        block = node_score[s:e]
+        topk_count = int(np.sum((order_topk >= s) & (order_topk < e)))
+        rows.append({
+            "network": network_names[idx],
+            "num_rois": int(e - s),
+            "mean_importance": float(block.mean()),
+            "sum_importance": float(block.sum()),
+            "max_importance": float(block.max()),
+            "topk_count": topk_count,
+            "topk_fraction": topk_count / top_k,
+        })
+
+    for metric, key in [("mean_importance", "rank_by_mean"),
+                        ("sum_importance", "rank_by_sum"),
+                        ("topk_count", "rank_by_topk")]:
+        for rank, r in enumerate(sorted(rows, key=lambda r: -r[metric]), 1):
+            r[key] = rank
+
+    rows.sort(key=lambda r: -r["mean_importance"])
+    return rows
+
+
+def plot_network_ranking(ranking, out_path, title, metric="mean_importance",
+                          metric_label="Mean |importance| per ROI (size-normalized)"):
+    """Bar chart of network_ranking() output, sorted by `metric`."""
+    ordered = sorted(ranking, key=lambda r: -r[metric])
+    names = [r["network"] for r in ordered]
+    values = [r[metric] for r in ordered]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.barh(names[::-1], values[::-1])
+    ax.set_xlabel(metric_label)
+    ax.set_title(title)
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
 
 
 def load_fold_matrices(matrices_path: Path):
@@ -45,23 +131,122 @@ def load_fold_matrices(matrices_path: Path):
     return matrices, labels
 
 
+def _cluster_id_names(values, node_clus_map_path):
+    """values: list of int community ids (0..K-1), in node_clus_map.pickle's
+    dict-iteration order (== cluster_order used by DHGFormer.reorder_nodes).
+    Returns a name per community id: the known Yeo+subcortical names if the
+    per-community ROI counts match KNOWN_CLUSTER_SIZE_SIGNATURE exactly,
+    otherwise generic 'Cluster-{id}' labels (never a misleading Net-i guess)."""
+    from collections import Counter
+    counts = Counter(values)
+    num_clusters = max(counts) + 1
+    sizes = [counts.get(i, 0) for i in range(num_clusters)]
+    if sizes == KNOWN_CLUSTER_SIZE_SIGNATURE:
+        print(f"[load_network_names] '{node_clus_map_path}' matches the known "
+              f"Com-BrainTF/DHGFormer 8-community cc200 signature {sizes}; "
+              f"using verified names {KNOWN_CLUSTER_NAMES} "
+              f"(source: Bannadabhavi et al., MICCAI 2023, Sec 3.1).")
+        return KNOWN_CLUSTER_NAMES
+    print(f"[load_network_names] '{node_clus_map_path}' has integer community "
+          f"ids with sizes {sizes}, which does NOT match the known signature "
+          f"{KNOWN_CLUSTER_SIZE_SIGNATURE} -- using generic 'Cluster-{{id}}' "
+          f"names instead of guessing Yeo network identities.")
+    return [f"Cluster-{i}" for i in range(num_clusters)]
+
+
 def load_network_names(node_clus_map_path: Path, subnetwork_ends=SUBNETWORK_ENDS):
     """Best-effort: derive a readable name per subnetwork block from
-    node_clus_map.pickle if it stores per-ROI network labels; otherwise
-    fall back to generic Net-1..Net-8 names."""
+    node_clus_map.pickle. Supports two value formats:
+      - string values (the network name is stored directly per ROI), or
+      - integer community-id values (0..K-1), in which case names are
+        resolved via _cluster_id_names (see KNOWN_CLUSTER_SIZE_SIGNATURE).
+    Falls back to generic Net-1..Net-8 names on any failure.
+
+    NOTE: any failure here (missing file, wrong pickle structure, unexpected
+    value type, length mismatch with subnetwork_ends) is reported with a
+    [load_network_names] warning instead of being swallowed silently, so you
+    can tell *why* you're getting fallback names instead of real ones.
+    """
+    node_clus_map_path = Path(node_clus_map_path) if node_clus_map_path else None
+    if node_clus_map_path is None or not Path(node_clus_map_path).exists():
+        print(f"[load_network_names] WARNING: node_clus_map path not found: "
+              f"'{node_clus_map_path}'. Falling back to {DEFAULT_NETWORK_NAMES}.")
+        return DEFAULT_NETWORK_NAMES
     try:
         with open(node_clus_map_path, "rb") as f:
             node_cluster_map = pickle.load(f)
         values = list(node_cluster_map.values())
-        if values and isinstance(values[0], str):
+        if not values:
+            print(f"[load_network_names] WARNING: '{node_clus_map_path}' loaded "
+                  f"but is empty. Falling back to {DEFAULT_NETWORK_NAMES}.")
+            return DEFAULT_NETWORK_NAMES
+
+        if isinstance(values[0], str):
+            if len(values) < subnetwork_ends[-1]:
+                print(f"[load_network_names] WARNING: '{node_clus_map_path}' has "
+                      f"{len(values)} entries but subnetwork_ends expects "
+                      f"{subnetwork_ends[-1]}. Falling back to {DEFAULT_NETWORK_NAMES}.")
+                return DEFAULT_NETWORK_NAMES
             names = []
             for s, e in _subnetwork_slices(subnetwork_ends):
                 block = values[s:e]
                 names.append(max(set(block), key=block.count))
             return names
-    except Exception:
-        pass
-    return DEFAULT_NETWORK_NAMES
+
+        if isinstance(values[0], (int, np.integer)):
+            return _cluster_id_names(values, node_clus_map_path)
+
+        print(f"[load_network_names] WARNING: values in '{node_clus_map_path}' "
+              f"are of type {type(values[0])}, neither str nor int. "
+              f"Falling back to {DEFAULT_NETWORK_NAMES}.")
+        return DEFAULT_NETWORK_NAMES
+    except Exception as e:
+        print(f"[load_network_names] WARNING: failed to read "
+              f"'{node_clus_map_path}' ({type(e).__name__}: {e}). "
+              f"Falling back to {DEFAULT_NETWORK_NAMES}.")
+        return DEFAULT_NETWORK_NAMES
+
+
+def load_roi_names(node_clus_map_path: Path):
+    """Per-ROI label = the community/network each ROI belongs to, in the same
+    order the model/explainability index ROIs (post cluster_order reorder).
+    Supports both string-valued and integer-community-id-valued pickles.
+    Returns None if it can't be derived (caller falls back to 'ROI {i}')."""
+    node_clus_map_path = Path(node_clus_map_path) if node_clus_map_path else None
+    if node_clus_map_path is None or not Path(node_clus_map_path).exists():
+        print(f"[load_roi_names] WARNING: node_clus_map path not found: "
+              f"'{node_clus_map_path}'. ROI labels will fall back to 'ROI {{i}}'.")
+        return None
+    try:
+        with open(node_clus_map_path, "rb") as f:
+            node_cluster_map = pickle.load(f)
+        keys = list(node_cluster_map.keys())
+        values = list(node_cluster_map.values())
+        if values and isinstance(values[0], str):
+            return [f"ROI{i}-{values[i]}" for i in range(len(values))]
+        if values and isinstance(values[0], (int, np.integer)):
+            cluster_names = _cluster_id_names(values, node_clus_map_path)
+            return [f"ROI{i}(orig{keys[i]})-{cluster_names[values[i]]}"
+                    for i in range(len(values))]
+        print(f"[load_roi_names] WARNING: values in '{node_clus_map_path}' are "
+              f"of type {type(values[0]) if values else None}, neither str "
+              f"nor int. ROI labels will fall back to 'ROI {{i}}'.")
+    except Exception as e:
+        print(f"[load_roi_names] WARNING: failed to read '{node_clus_map_path}' "
+              f"({type(e).__name__}: {e}). ROI labels will fall back to 'ROI {{i}}'.")
+    return None
+
+
+def guess_node_clus_map_path(start_dir):
+    """Search start_dir and its parents for node_clus_map.pickle. Shared by
+    ExplainabilityReport (Stage-1) and GradientExplainabilityReport (Stage-2)
+    so both resolve the same file the same way regardless of CWD."""
+    start_dir = Path(start_dir)
+    for parent in [start_dir, *start_dir.parents]:
+        candidate = parent / "node_clus_map.pickle"
+        if candidate.exists():
+            return candidate
+    return Path("node_clus_map.pickle")
 
 
 class ExplainabilityReport:
@@ -83,21 +268,35 @@ class ExplainabilityReport:
         self.subnetwork_ends = subnetwork_ends
         self.roi_num = self.matrices.shape[-1]
         self.classes = sorted(np.unique(self.labels).tolist())
-
+        
+        
+        guess_path = node_clus_map_path or self._guess_node_clus_map_path()
+        print(f"[ExplainabilityReport] using node_clus_map: '{guess_path}'")
         if network_names is not None:
             self.network_names = network_names
         else:
-            guess_path = node_clus_map_path or self._guess_node_clus_map_path()
             self.network_names = load_network_names(guess_path, subnetwork_ends)
+        self.roi_names = load_roi_names(guess_path)
+
+        # persist what was actually resolved, so it's inspectable outside the plots
+        with open(self.out_dir / "network_roi_mapping.json", "w") as f:
+            json.dump({
+                "node_clus_map_path": str(guess_path),
+                "network_names": list(self.network_names),
+                "roi_names": list(self.roi_names) if self.roi_names is not None else None,
+                "subnetwork_ends": list(self.subnetwork_ends),
+            }, f, indent=2, ensure_ascii=False)
+
+        # if network_names is not None:
+        #     self.network_names = network_names
+        # else:
+        #     guess_path = node_clus_map_path or self._guess_node_clus_map_path()
+        #     self.network_names = load_network_names(guess_path, subnetwork_ends)
 
     def _guess_node_clus_map_path(self):
         # node_clus_map.pickle sits at the repo root, several levels above
         # .../log_folder/model_type/dataset_atlas/run_.../fold_N
-        for parent in self.fold_dir.parents:
-            candidate = parent / "node_clus_map.pickle"
-            if candidate.exists():
-                return candidate
-        return Path("node_clus_map.pickle")
+        return guess_node_clus_map_path(self.fold_dir)
 
     # ---------- 1. per-class average connectome ----------
     def group_average_matrices(self):
@@ -168,6 +367,15 @@ class ExplainabilityReport:
         plt.tight_layout()
         fig.savefig(self.out_dir / "subnetwork_summary.png", dpi=200)
         plt.close(fig)
+
+        np.savez(self.out_dir / "subnetwork_summary.npz",
+                 **{f"class_{c}": mat for c, mat in result.items()},
+                 network_names=np.array(self.network_names, dtype=object))
+        with open(self.out_dir / "subnetwork_summary.json", "w") as f:
+            json.dump({
+                "network_names": list(self.network_names),
+                "matrices": {str(c): mat.tolist() for c, mat in result.items()}
+            }, f, indent=2, ensure_ascii=False)
         return result
 
     # ---------- 4. discriminative ROI ranking ----------
@@ -176,17 +384,41 @@ class ExplainabilityReport:
         node_score = np.abs(diff).sum(axis=1)
         order = np.argsort(-node_score)[:top_k]
 
+        # fig, ax = plt.subplots(figsize=(8, 6))
+        # ax.barh([f"ROI {i}" for i in order][::-1], node_score[order][::-1])
+        labels = (self.roi_names if self.roi_names is not None
+                  else [f"ROI {i}" for i in range(len(node_score))])
+
         fig, ax = plt.subplots(figsize=(8, 6))
-        ax.barh([f"ROI {i}" for i in order][::-1], node_score[order][::-1])
+        ax.barh([labels[i] for i in order][::-1], node_score[order][::-1])
         ax.set_xlabel("Sum |delta connectivity|")
         ax.set_title(f"Top-{top_k} discriminative ROIs")
         plt.tight_layout()
         fig.savefig(self.out_dir / "roi_ranking.png", dpi=200)
         plt.close(fig)
 
-        ranking = [{"roi_index": int(i), "score": float(node_score[i])} for i in order]
+        # ranking = [{"roi_index": int(i), "score": float(node_score[i])} for i in order]
+        ranking = [{"roi_index": int(i), "roi_name": labels[i], "score": float(node_score[i])} for i in order]
         with open(self.out_dir / "roi_ranking.json", "w") as f:
             json.dump(ranking, f, indent=2)
+        return ranking
+
+    # ---------- 4b. Yeo-network-level importance ranking ----------
+    def network_ranking(self, top_k=20):
+        """Which of the 8 Yeo(+subcortical) networks matter most, aggregating
+        the same per-ROI |group-difference| score used in roi_ranking() up to
+        network level. See rank_networks_by_importance() for the criteria."""
+        diff, _, _ = self.group_difference()
+        node_score = np.abs(diff).sum(axis=1)
+        ranking = rank_networks_by_importance(
+            node_score, self.subnetwork_ends, self.network_names, top_k=top_k)
+
+        plot_network_ranking(
+            ranking, self.out_dir / "network_ranking.png",
+            title=f"Yeo network importance ranking (mean |delta connectivity| per ROI)")
+
+        with open(self.out_dir / "network_ranking.json", "w") as f:
+            json.dump(ranking, f, indent=2, ensure_ascii=False)
         return ranking
 
     # ---------- 5. connectogram of top discriminative edges ----------
@@ -222,6 +454,7 @@ class ExplainabilityReport:
         self.group_difference()
         self.subnetwork_summary()
         self.roi_ranking()
+        self.network_ranking()
         self.connectogram()
         print(f"[explainability] figures saved to: {self.out_dir}")
 
