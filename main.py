@@ -38,9 +38,23 @@ def main(args, current_seed):
                          smri_input_dim=smri_dim)
         use_train = BasicTrain
 
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=config['train']['lr'],
-            weight_decay=config['train']['weight_decay'])
+        # optimizer = torch.optim.Adam(
+        #     model.parameters(), lr=config['train']['lr'],
+        #     weight_decay=config['train']['weight_decay'])
+        no_decay_params = []
+        decay_params = []
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if 'temporal_encoder.gate' in name or 'temporal_encoder.pos_embed' in name:
+                no_decay_params.append(p)
+            else:
+                decay_params.append(p)
+
+        optimizer = torch.optim.Adam([
+            {'params': decay_params, 'weight_decay': config['train']['weight_decay']},
+            {'params': no_decay_params, 'weight_decay': 0.0}
+        ], lr=config['train']['lr'])
         opts = (optimizer,)
 
         loss_name = 'loss'
