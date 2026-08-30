@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion
+from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder
 import pickle
 
 
@@ -212,6 +212,18 @@ class DHGFormer(nn.Module):
         self.graph_generation = model_config['graph_generation']
         self.use_smri = use_smri
         self.fusion_method = model_config.get('fusion_method', 'concat')
+        
+        
+        # Optional temporal transformer (attention روی محور زمان قبل از FCEncoder)
+        self.use_temporal_transformer = model_config.get('use_temporal_transformer', False)
+        if self.use_temporal_transformer:
+            self.temporal_encoder = TemporalTransformerEncoder(
+                seq_len=time_series_len,
+                embed_dim=model_config.get('temporal_embed_dim', 32),
+                num_heads=model_config.get('temporal_num_heads', 4),
+                num_layers=model_config.get('temporal_num_layers', 1),
+                dropout=model_config.get('temporal_dropout', 0.1)
+            )
 
         # Feature extractor
         if model_config['extractor_type'] == 'transformer':
@@ -220,6 +232,14 @@ class DHGFormer(nn.Module):
                 num_head=4,
                 embed_dim=model_config['embedding_size']
             )
+
+        # Feature extractor
+        # if model_config['extractor_type'] == 'transformer':
+        #     self.feature_extractor = FCEncoder(
+        #         input_dim=time_series_len,
+        #         num_head=4,
+        #         embed_dim=model_config['embedding_size']
+        #     )
 
         # Graph generator
         if self.graph_generation == "linear":
@@ -300,6 +320,9 @@ class DHGFormer(nn.Module):
         # Reorder inputs according to cluster mapping
         time_series = self.reorder_nodes(time_series, dimension=1)
         node_features = self.reorder_nodes(node_features, dimension=2)
+        
+        if self.use_temporal_transformer:
+            time_series = self.temporal_encoder(time_series)
 
         # Extract features and generate graph
         embeddings = self.feature_extractor(time_series, node_features)

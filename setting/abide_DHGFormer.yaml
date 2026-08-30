@@ -36,6 +36,12 @@ model:
   smri_hid_2: 30
   smri_dropout: 0.5
 
+  use_temporal_transformer: false
+  temporal_embed_dim: 32
+  temporal_num_heads: 4
+  temporal_num_layers: 1
+  temporal_dropout: 0.1
+
 
 
 train:

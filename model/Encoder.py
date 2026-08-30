@@ -207,3 +207,48 @@ class SMRITransformerEncoder(torch.nn.Module):
         out = self.transformer(tokens)
         cls_out = out[:, 0, :]
         return self.dropout(self.out_proj(cls_out))
+    
+    
+class TemporalTransformerEncoder(torch.nn.Module):
+    """Self-attention روی محور زمان (T)، مستقل و به‌صورت batched برای هر ROI.
+    ورودی/خروجی هر دو شکل (B, N, T) دارند تا بدون تغییر در FCEncoder یا هر
+    جای دیگر pipeline جایگزین/اضافه بشه. کاملاً اختیاری است و از طریق
+    model_config['use_temporal_transformer'] در yaml کنترل می‌شود."""
+
+    def __init__(self, seq_len, embed_dim=32, num_heads=4, num_layers=1, dropout=0.1):
+        super().__init__()
+        self.seq_len = seq_len
+
+        # هر گام زمانی (اسکالر) -> embed_dim
+        self.value_proj = torch.nn.Linear(1, embed_dim)
+        self.pos_embed = torch.nn.Parameter(torch.zeros(1, seq_len, embed_dim))
+        torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=num_heads,
+            dim_feedforward=embed_dim * 2, dropout=dropout,
+            batch_first=True)
+        self.transformer = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # embed_dim -> اسکالر (بازگشت به مقیاس سری زمانی خام)
+        self.out_proj = torch.nn.Linear(embed_dim, 1)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.norm = torch.nn.LayerNorm(seq_len)
+
+    def forward(self, x):
+        # x: (B, N, T)
+        B, N, T = x.shape
+        assert T == self.seq_len, \
+            f"TemporalTransformerEncoder expects T={self.seq_len}, got {T}"
+
+        x_flat = x.reshape(B * N, T, 1)           # هر گام زمانی یک توکن
+        tokens = self.value_proj(x_flat)           # (B*N, T, embed_dim)
+        tokens = tokens + self.pos_embed
+
+        out = self.transformer(tokens)             # (B*N, T, embed_dim)
+        out = self.dropout(self.out_proj(out))      # (B*N, T, 1)
+        out = out.squeeze(-1).reshape(B, N, T)       # (B, N, T)
+
+        # residual connection: پایداری آموزش را حفظ می‌کند و به FCEncoder
+        # چیزی در همان مقیاس/دامنه‌ی سری زمانی خام تحویل می‌دهد
+        return self.norm(x + out)
