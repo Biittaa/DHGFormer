@@ -14,7 +14,7 @@ from nilearn import plotting, datasets
 import random
 from sklearn.linear_model import RidgeClassifier
 from sklearn.feature_selection import RFE
-
+from imports.smri_graph_build import build_view_node_features, build_fold_graphs, VIEW_NAMES
 
 class StandardScaler:
     """
@@ -206,22 +206,94 @@ def _load_raw_tensors(dataset_config):
     }
 
 
-def init_dataloader(dataset_config):
-    """Original single random split (train_set/val_set ratios). Kept for
-    backward compatibility if you ever want a quick non-CV run."""
+# def init_dataloader(dataset_config):
+#     """Original single random split (train_set/val_set ratios). Kept for
+#     backward compatibility if you ever want a quick non-CV run."""
+#     raw = _load_raw_tensors(dataset_config)
+
+#     dataset = utils.TensorDataset(
+#         raw["final_fc"], raw["final_pearson"], raw["labels"],
+#         raw["pseudo_arr"], raw["smri_features"]
+#     )
+
+#     length = raw["final_fc"].shape[0]
+#     train_length = int(length * dataset_config["train_set"])
+#     val_length = int(length * dataset_config["val_set"])
+
+#     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+#         dataset, [train_length, val_length, length - train_length - val_length])
+
+#     train_dataloader = utils.DataLoader(
+#         train_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
+#     val_dataloader = utils.DataLoader(
+#         val_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
+#     test_dataloader = utils.DataLoader(
+#         test_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
+
+#     return (train_dataloader, val_dataloader, test_dataloader), \
+#         raw["node_size"], raw["node_feature_size"], raw["timeseries"], raw["smri_dim"]
+def init_dataloader_kfold(dataset_config, fold_idx, kfold=5, val_ratio=0.1, seed=123):
+    """Real stratified k-fold cross validation loader.
+    Call this once per fold_idx (0..kfold-1) from main.py."""
     raw = _load_raw_tensors(dataset_config)
+
+    train_idx, val_idx, test_idx = get_kfold_split_indices(
+        raw["labels_np"], kfold=kfold, fold_idx=fold_idx,
+        val_ratio=val_ratio, seed=seed
+    )
+
+    smri_features_t = raw["smri_features"]
+    smri_dim = raw["smri_dim"]
+    mvgcn_view_meta = None
+    mvgcn_fold_graphs = None
+
+    use_smri = dataset_config.get("use_smri", False)
+    smri_encoder_type = dataset_config.get("smri_encoder_type", "fcn")
+
+    if use_smri and smri_encoder_type == "multiview_gcn":
+        num_subjects = raw["final_fc"].shape[0]
+        view_node_names, view_node_features = build_view_node_features(dataset_config, num_subjects)
+
+        n_nodes_per_view = {v: arr.shape[1] for v, arr in view_node_features.items()}
+        n_subfeat_per_view = {v: arr.shape[2] for v, arr in view_node_features.items()}
+
+        flat_per_view = [view_node_features[v].reshape(num_subjects, -1) for v in VIEW_NAMES]
+        smri_flat = np.concatenate(flat_per_view, axis=1)
+        smri_features_t = torch.from_numpy(smri_flat).float()
+        smri_dim = smri_flat.shape[1]
+
+        k_per_view = dataset_config.get("mvgcn_k_neighbors", {"aseg": 8, "aparc": 32, "wmparc": 16})
+        base_edge_index, base_edge_weight = build_fold_graphs(view_node_features, train_idx, k_per_view)
+
+        mvgcn_view_meta = {
+            "view_names": VIEW_NAMES,
+            "n_nodes_per_view": n_nodes_per_view,
+            "n_subfeat_per_view": n_subfeat_per_view,
+        }
+        mvgcn_fold_graphs = {
+            "base_edge_index": base_edge_index,
+            "base_edge_weight": base_edge_weight,
+        }
+
+    elif use_smri and dataset_config.get("use_smri_ridge_fs", False):
+        n_select = dataset_config.get("smri_ridge_num_features", 1435)
+        smri_np = smri_ridge_feature_selection(
+            smri_features_t.numpy(), raw["labels_np"], train_idx, n_select
+        )
+        smri_features_t = torch.from_numpy(smri_np).float()
+        smri_dim = smri_features_t.shape[1]
 
     dataset = utils.TensorDataset(
         raw["final_fc"], raw["final_pearson"], raw["labels"],
-        raw["pseudo_arr"], raw["smri_features"]
+        raw["pseudo_arr"], smri_features_t
     )
 
-    length = raw["final_fc"].shape[0]
-    train_length = int(length * dataset_config["train_set"])
-    val_length = int(length * dataset_config["val_set"])
+    print(f"[Fold {fold_idx+1}/{kfold}] train={len(train_idx)} "
+          f"val={len(val_idx)} test={len(test_idx)}")
 
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        dataset, [train_length, val_length, length - train_length - val_length])
+    train_dataset = utils.Subset(dataset, train_idx)
+    val_dataset = utils.Subset(dataset, val_idx)
+    test_dataset = utils.Subset(dataset, test_idx)
 
     train_dataloader = utils.DataLoader(
         train_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
@@ -231,8 +303,8 @@ def init_dataloader(dataset_config):
         test_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
 
     return (train_dataloader, val_dataloader, test_dataloader), \
-        raw["node_size"], raw["node_feature_size"], raw["timeseries"], raw["smri_dim"]
-
+        raw["node_size"], raw["node_feature_size"], raw["timeseries"], smri_dim, \
+        mvgcn_view_meta, mvgcn_fold_graphs
 
 # def get_kfold_split_indices(labels_np, kfold, fold_idx, val_ratio=0.1, seed=123):
 #     """Real stratified k-fold: (kfold-1)/kfold of the data is train+val,

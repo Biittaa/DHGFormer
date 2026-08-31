@@ -25,7 +25,25 @@ def main(args, config, fold_idx, kfold, base_seed):
 
     val_ratio = config['train'].get('val_ratio', config.get('data', {}).get('val_set', 0.1))
 
-    dataloaders, node_size, node_feature_size, timeseries_size, smri_dim = \
+    # dataloaders, node_size, node_feature_size, timeseries_size, smri_dim = \
+    #     init_dataloader_kfold(
+    #         config['data'],
+    #         fold_idx=fold_idx,
+    #         kfold=kfold,
+    #         val_ratio=val_ratio,
+    #         seed=base_seed
+    #     )
+
+    # config['train']["seq_len"] = timeseries_size
+    # config['train']["node_size"] = node_size
+
+    # model = DHGFormer(config['model'], node_size,
+    #                  node_feature_size, timeseries_size,
+    #                  use_smri=config['data'].get('use_smri', False),
+    #                  smri_input_dim=smri_dim)
+    
+    dataloaders, node_size, node_feature_size, timeseries_size, smri_dim, \
+        mvgcn_view_meta, mvgcn_fold_graphs = \
         init_dataloader_kfold(
             config['data'],
             fold_idx=fold_idx,
@@ -37,10 +55,16 @@ def main(args, config, fold_idx, kfold, base_seed):
     config['train']["seq_len"] = timeseries_size
     config['train']["node_size"] = node_size
 
+    # smri_encoder_type فقط زیر data: تنظیم می‌شه؛ اینجا به model: هم منتقل
+    # می‌شه که DHGFormer.__init__ بدون دوباره‌نویسی توی هر دو بخش، همون مقدار رو بخونه.
+    config['model']['smri_encoder_type'] = config['data'].get('smri_encoder_type', 'fcn')
+
     model = DHGFormer(config['model'], node_size,
                      node_feature_size, timeseries_size,
                      use_smri=config['data'].get('use_smri', False),
-                     smri_input_dim=smri_dim)
+                     smri_input_dim=smri_dim,
+                     mvgcn_view_meta=mvgcn_view_meta,
+                     mvgcn_fold_graphs=mvgcn_fold_graphs)
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=config['train']['lr'],

@@ -7,7 +7,11 @@ data:
   train_set: 0.7
   val_set: 0.1
   use_smri: false
-  smri_encoder_type: fcn
+  smri_encoder_type: multiview_gcn   # fcn | transformer | multiview_gcn
+  mvgcn_k_neighbors:
+    aseg: 8
+    aparc: 32
+    wmparc: 16
   use_smri_ridge_fs: false
   smri_ridge_num_features: 1435
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
@@ -36,11 +40,19 @@ model:
   smri_hid_2: 30
   smri_dropout: 0.5
 
-  use_temporal_transformer: true
+  use_temporal_transformer: false
   temporal_embed_dim: 16
   temporal_num_heads: 2
   temporal_num_layers: 1
   temporal_dropout: 0.3
+
+
+    mvgcn_hid_c: 16
+    mvgcn_K: 3
+    mvgcn_dropout: 0.5
+    mvgcn_graph_mode: static      # static | learnable | learnable_scratch
+    mvgcn_conv_type: cheb         # cheb | gcn | graph | gat | gin | sage | tag | sgc | arma | bern
+    mvgcn_fusion_type: concat     # concat | sum | mean | attention | gated
 
 
 
