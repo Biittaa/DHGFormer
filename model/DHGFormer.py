@@ -284,6 +284,8 @@ class DHGFormer(nn.Module):
                 self._mvgcn_n_nodes_per_view = mvgcn_view_meta['n_nodes_per_view']
                 self._mvgcn_n_subfeat_per_view = mvgcn_view_meta['n_subfeat_per_view']
                 smri_out_dim = self.smri_encoder.out_dim
+                self.fmri_norm = nn.LayerNorm(fmri_embed_dim)
+                self.smri_norm = nn.LayerNorm(smri_out_dim)
 
             elif smri_encoder_type == 'transformer':
                 smri_patch_size = model_config.get('smri_patch_size', 32)
@@ -458,11 +460,14 @@ class DHGFormer(nn.Module):
                 smri_embedding = self._forward_mvgcn(smri_features)
             else:
                 smri_embedding = self.smri_encoder(smri_features)
+                
+            fmri_embedding_n = self.fmri_norm(fmri_embedding)
+            smri_embedding_n = self.smri_norm(smri_embedding)
 
             if self.fusion_method == 'attention':
-                fused_embedding, modality_weights = self.modality_fusion(fmri_embedding, smri_embedding)
+                fused_embedding, modality_weights = self.modality_fusion(fmri_embedding_n, smri_embedding_n)
             else:  # concat
-                fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
+                fused_embedding = torch.cat([fmri_embedding_n, smri_embedding_n], dim=1)
 
             prediction = self.fusion_classifier(fused_embedding)
         else:
