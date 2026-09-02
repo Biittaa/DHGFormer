@@ -265,6 +265,7 @@ class DHGFormer(nn.Module):
             smri_dropout = model_config.get('smri_dropout', 0.5)
             smri_encoder_type = model_config.get('smri_encoder_type', 'fcn')
             self.smri_encoder_type = smri_encoder_type
+            fmri_embed_dim = 8 * roi_num
 
             if smri_encoder_type == 'multiview_gcn':
                 self.smri_encoder = MultiViewGCN(
@@ -314,7 +315,7 @@ class DHGFormer(nn.Module):
                 smri_out_dim = smri_hid_2
 
             fmri_embed_dim = 8 * roi_num
-            fusion_input_dim = fmri_embed_dim + smri_out_dim
+            # fusion_input_dim = fmri_embed_dim + smri_out_dim
             if self.fusion_method == 'attention':
                     fusion_hidden_dim = model_config.get('fusion_hidden_dim', 64)
                     self.modality_fusion = ModalityAttentionFusion(
