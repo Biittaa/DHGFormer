@@ -316,6 +316,9 @@ class DHGFormer(nn.Module):
 
             fmri_embed_dim = 8 * roi_num
             # fusion_input_dim = fmri_embed_dim + smri_out_dim
+            fusion_input_dim = fmri_embed_dim + smri_out_dim
+            self.fmri_norm = nn.LayerNorm(fmri_embed_dim)
+            self.smri_norm = nn.LayerNorm(smri_out_dim)
             if self.fusion_method == 'attention':
                     fusion_hidden_dim = model_config.get('fusion_hidden_dim', 64)
                     self.modality_fusion = ModalityAttentionFusion(
