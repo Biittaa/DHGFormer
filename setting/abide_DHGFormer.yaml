@@ -47,12 +47,12 @@ model:
   temporal_dropout: 0.3
 
 
-    mvgcn_hid_c: 16
-    mvgcn_K: 3
-    mvgcn_dropout: 0.5
-    mvgcn_graph_mode: static      # static | learnable | learnable_scratch
-    mvgcn_conv_type: cheb         # cheb | gcn | graph | gat | gin | sage | tag | sgc | arma | bern
-    mvgcn_fusion_type: concat     # concat | sum | mean | attention | gated
+  mvgcn_hid_c: 16
+  mvgcn_K: 3
+  mvgcn_dropout: 0.5
+  mvgcn_graph_mode: static      # static | learnable | learnable_scratch
+  mvgcn_conv_type: cheb         # cheb | gcn | graph | gat | gin | sage | tag | sgc | arma | bern
+  mvgcn_fusion_type: concat     # concat | sum | mean | attention | gated
 
 
 
