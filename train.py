@@ -196,6 +196,8 @@ class BasicTrain:
                 f'Test SEN:{SEN:.4f}',
                 f'Test SPE:{SPE:.4f}',
                 f'Test F1:{test_result[-4]:.4f}',
+                f'Gate:{torch.sigmoid(self.model.temporal_encoder.gate).item():.4f}' if self.model.use_temporal_transformer else '',
+
             ]))
 
             txt += f'Epoch[{epoch}/{self.epochs}] '+f'Train Loss:{self.train_loss.avg: .3f} '+f'Train ACC:{self.train_accuracy.avg: .3f}% '+f'Val ACC:{self.val_accuracy.avg: .3f}% '+ f'Val AUC:{val_result[0]:.3f} '+f'Test ACC:{self.test_accuracy.avg: .3f}% '+f'Test AUC:{test_result[0]:.4f} '+f'Test SEN:{SEN:.4f} '+f'Test SPE:{SPE:.4f} '+f'Test F1:{test_result[-4]:.4f}'+'\n'
