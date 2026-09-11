@@ -6,13 +6,13 @@ data:
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  use_smri: true
+  use_smri: false
   smri_encoder_type: multiview_gcn
   mvgcn_k_neighbors:
     aseg: 8
     aparc: 32
     wmparc: 16
-  use_smri_ridge_fs: true
+  use_smri_ridge_fs: false
   smri_ridge_num_features: 500
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
@@ -33,7 +33,7 @@ model:
   smri_hid_1: 500
   smri_hid_2: 30
   smri_dropout: 0.5
-  use_temporal_transformer: false
+  use_temporal_transformer: true
   temporal_embed_dim: 16
   temporal_num_heads: 4
   temporal_num_layers: 1

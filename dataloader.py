@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from nilearn import plotting, datasets
 import random
+# from .imports.smri_graph_build import make_imputer
+from imports.smri_graph_build import make_imputer
 
 class StandardScaler:
     """
@@ -123,10 +125,14 @@ def load_smri_features(dataset_config, num_subjects):
 
     print(f"sMRI missing subjects: {missing_count}")
     
-    col_means = np.nanmean(smri_features, axis=0)
-    col_means = np.nan_to_num(col_means, nan=0.0)
-    nan_rows, nan_cols = np.where(np.isnan(smri_features))
-    smri_features[nan_rows, nan_cols] = col_means[nan_cols]
+    # col_means = np.nanmean(smri_features, axis=0)
+    # col_means = np.nan_to_num(col_means, nan=0.0)
+    # nan_rows, nan_cols = np.where(np.isnan(smri_features))
+    # smri_features[nan_rows, nan_cols] = col_means[nan_cols]
+    strategy = dataset_config.get("smri_impute_strategy", "mean")
+    knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
+    imputer = make_imputer(strategy, knn_k)
+    smri_features = imputer.fit_transform(smri_features)
     
     feat_std = smri_features.std(axis=0)
     keep_cols = feat_std > 1e-8
@@ -253,10 +259,12 @@ def init_dataloader(dataset_config):
     mvgcn_view_meta = None
     mvgcn_fold_graphs = None
 
+    # if use_smri and smri_encoder_type == "multiview_gcn":
+    #     from imports.smri_graph_build import build_view_node_features, VIEW_NAMES
+    #     _, view_node_features = build_view_node_features(dataset_config, num_subjects)
     if use_smri and smri_encoder_type == "multiview_gcn":
         from imports.smri_graph_build import build_view_node_features, VIEW_NAMES
-        _, view_node_features = build_view_node_features(dataset_config, num_subjects)
-
+        _, view_node_features = build_view_node_features(dataset_config, num_subjects, labels=labels)
         n_nodes_per_view = {v: arr.shape[1] for v, arr in view_node_features.items()}
         n_subfeat_per_view = {v: arr.shape[2] for v, arr in view_node_features.items()}
 
