@@ -6,55 +6,44 @@ data:
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  use_smri: false
-  smri_encoder_type: multiview_gcn   # fcn | transformer | multiview_gcn
+  use_smri: true
+  smri_encoder_type: multiview_gcn
   mvgcn_k_neighbors:
     aseg: 8
     aparc: 32
     wmparc: 16
-  use_smri_ridge_fs: false
-  smri_ridge_num_features: 1435
+  use_smri_ridge_fs: true
+  smri_ridge_num_features: 500
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
-  
+  smri_impute_strategy: knn
+  smri_impute_knn_neighbors: 10
 
 model:
   type: DHGFormer
-
   extractor_type: transformer
   embedding_size: 8
   window_size: 4
-
   cnn_pool_size: 16
-
-  # product or linear
   graph_generation: product
-
   num_gru_layers: 4
-
   dropout: 0.5
-
   fusion_method: concat
   smri_hid_1: 500
   smri_hid_2: 30
   smri_dropout: 0.5
-
   use_temporal_transformer: false
   temporal_embed_dim: 16
-  temporal_num_heads: 2
+  temporal_num_heads: 4
   temporal_num_layers: 1
   temporal_dropout: 0.3
-
-
   mvgcn_hid_c: 16
-  mvgcn_K: 3
+  mvgcn_K: 5
   mvgcn_dropout: 0.5
-  mvgcn_graph_mode: static      # static | learnable | learnable_scratch
-  mvgcn_conv_type: cheb         # cheb | gcn | graph | gat | gin | sage | tag | sgc | arma | bern
-  mvgcn_fusion_type: concat     # concat | sum | mean | attention | gated
-
-
+  mvgcn_graph_mode: static
+  mvgcn_conv_type: cheb
+  mvgcn_fusion_type: concat
 
 train:
   method: normal
@@ -62,12 +51,9 @@ train:
   weight_decay: 1.0e-4
   epochs: 100
   optimizer: adam
-
   group_loss: true
   sparsity_loss: true
   sparsity_loss_weight: 1.0e-4
   log_folder: result
-
-  # uniform or pearson
   pure_gnn_graph: pearson
   val_ratio: 0.1
