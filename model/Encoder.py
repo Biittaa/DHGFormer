@@ -256,10 +256,7 @@ class SMRITransformerEncoder(torch.nn.Module):
 
 
 class TemporalTransformerEncoder(torch.nn.Module):
-    """Self-attention روی محور زمان با gated residual. gate در ابتدا نزدیک صفر
-    است، یعنی مدل عملاً از رفتار baseline (بدون temporal encoder) شروع می‌کند
-    و فقط اگر سیگنال gradient واقعاً مفید باشد، به مرور وزن بیشتری به خروجی
-    این ماژول می‌دهد. این ریسک regression نسبت به baseline را به‌شدت کم می‌کند."""
+    
 
     def __init__(self, seq_len, embed_dim=32, num_heads=4, num_layers=1, dropout=0.1):
         super().__init__()
@@ -279,7 +276,6 @@ class TemporalTransformerEncoder(torch.nn.Module):
         self.dropout = torch.nn.Dropout(dropout)
         self.norm = torch.nn.LayerNorm(seq_len)
 
-        # gate شروع نزدیک صفر: sigmoid(-3) ≈ 0.047
         self.gate = torch.nn.Parameter(torch.tensor(-3.0))
 
     def forward(self, x):
@@ -294,6 +290,70 @@ class TemporalTransformerEncoder(torch.nn.Module):
         out = self.transformer(tokens)
         out = self.dropout(self.out_proj(out))
         out = out.squeeze(-1).reshape(B, N, T)
+
+        gate = torch.sigmoid(self.gate)
+        return self.norm(x + gate * out)
+    
+    
+    
+    
+    
+    
+    
+class WindowedTemporalTransformerEncoder(torch.nn.Module):
+
+    def __init__(self, seq_len, window_size=10, embed_dim=32, num_heads=4,
+                 num_layers=1, dropout=0.1):
+        super().__init__()
+        self.seq_len = seq_len
+        self.window_size = window_size
+        self.num_windows = (seq_len + window_size - 1) // window_size
+        self.pad_len = self.num_windows * window_size - seq_len
+
+        self.patch_proj = torch.nn.Linear(window_size, embed_dim)
+        self.pos_embed = torch.nn.Parameter(
+            torch.zeros(1, self.num_windows, embed_dim))
+        torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=num_heads,
+            dim_feedforward=embed_dim * 2, dropout=dropout,
+            batch_first=True)
+        self.transformer = torch.nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers)
+
+        # بازسازی هر توکن به همان window_size عدد خام (inverse patchify)
+        self.out_proj = torch.nn.Linear(embed_dim, window_size)
+        self.dropout = torch.nn.Dropout(dropout)
+        self.norm = torch.nn.LayerNorm(seq_len)
+
+        
+        self.gate = torch.nn.Parameter(torch.tensor(-3.0))
+
+    def forward(self, x):
+        # x: (B, N, T)
+        B, N, T = x.shape
+        assert T == self.seq_len, \
+            f"WindowedTemporalTransformerEncoder expects T={self.seq_len}, got {T}"
+
+        x_flat = x.reshape(B * N, T)
+
+        if self.pad_len > 0:
+            pad = torch.zeros(B * N, self.pad_len, device=x.device, dtype=x.dtype)
+            x_flat = torch.cat([x_flat, pad], dim=1)
+
+        patches = x_flat.view(B * N, self.num_windows, self.window_size)
+        tokens = self.patch_proj(patches)          # (B*N, num_windows, embed_dim)
+        tokens = tokens + self.pos_embed
+
+        out = self.transformer(tokens)               # (B*N, num_windows, embed_dim)
+        out = self.dropout(self.out_proj(out))         # (B*N, num_windows, window_size)
+        out = out.reshape(B * N, self.num_windows * self.window_size)
+
+        if self.pad_len > 0:
+            out = out[:, :self.seq_len]                # برش padding اضافه
+
+        out = out.reshape(B, N, T)
 
         gate = torch.sigmoid(self.gate)
         return self.norm(x + gate * out)

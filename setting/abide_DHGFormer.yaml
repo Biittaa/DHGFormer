@@ -34,6 +34,7 @@ model:
   smri_hid_2: 30
   smri_dropout: 0.5
   use_temporal_transformer: true
+  temporal_encoder_type: windowed
   temporal_embed_dim: 16
   temporal_num_heads: 4
   temporal_num_layers: 1

@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder
+from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder, WindowedTemporalTransformerEncoder
 from model.MultiViewGCN import MultiViewGCN
 import pickle
 
@@ -220,13 +220,24 @@ class DHGFormer(nn.Module):
         # Optional temporal transformer (attention روی محور زمان قبل از FCEncoder)
         self.use_temporal_transformer = model_config.get('use_temporal_transformer', False)
         if self.use_temporal_transformer:
-            self.temporal_encoder = TemporalTransformerEncoder(
-                seq_len=time_series_len,
-                embed_dim=model_config.get('temporal_embed_dim', 32),
-                num_heads=model_config.get('temporal_num_heads', 4),
-                num_layers=model_config.get('temporal_num_layers', 1),
-                dropout=model_config.get('temporal_dropout', 0.1)
-            )
+            temporal_encoder_type = model_config.get('temporal_encoder_type', 'pointwise')
+            if temporal_encoder_type == 'windowed':
+                self.temporal_encoder = WindowedTemporalTransformerEncoder(
+                    seq_len=time_series_len,
+                    window_size=model_config.get('temporal_window_size', 10),
+                    embed_dim=model_config.get('temporal_embed_dim', 32),
+                    num_heads=model_config.get('temporal_num_heads', 4),
+                    num_layers=model_config.get('temporal_num_layers', 1),
+                    dropout=model_config.get('temporal_dropout', 0.1)
+                )
+            else:
+                self.temporal_encoder = TemporalTransformerEncoder(
+                    seq_len=time_series_len,
+                    embed_dim=model_config.get('temporal_embed_dim', 32),
+                    num_heads=model_config.get('temporal_num_heads', 4),
+                    num_layers=model_config.get('temporal_num_layers', 1),
+                    dropout=model_config.get('temporal_dropout', 0.1)
+                )
 
         # Feature extractor
         if model_config['extractor_type'] == 'transformer':
@@ -236,13 +247,6 @@ class DHGFormer(nn.Module):
                 embed_dim=model_config['embedding_size']
             )
 
-        # Feature extractor
-        # if model_config['extractor_type'] == 'transformer':
-        #     self.feature_extractor = FCEncoder(
-        #         input_dim=time_series_len,
-        #         num_head=4,
-        #         embed_dim=model_config['embedding_size']
-        #     )
 
         # Graph generator
         if self.graph_generation == "linear":
