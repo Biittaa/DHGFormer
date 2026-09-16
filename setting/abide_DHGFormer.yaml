@@ -33,7 +33,7 @@ model:
   smri_hid_1: 500
   smri_hid_2: 30
   smri_dropout: 0.5
-  use_temporal_transformer: true
+  use_temporal_transformer: false
   temporal_encoder_type: windowed
   temporal_embed_dim: 16
   temporal_num_heads: 4
@@ -45,6 +45,7 @@ model:
   mvgcn_graph_mode: static
   mvgcn_conv_type: cheb
   mvgcn_fusion_type: concat
+  smri_only: true
 
 train:
   method: normal
@@ -52,8 +53,8 @@ train:
   weight_decay: 1.0e-4
   epochs: 100
   optimizer: adam
-  group_loss: true
-  sparsity_loss: true
+  group_loss: false
+  sparsity_loss: false
   sparsity_loss_weight: 1.0e-4
   log_folder: result
   pure_gnn_graph: pearson

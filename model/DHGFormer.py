@@ -314,6 +314,11 @@ class DHGFormer(nn.Module):
                     dropout=smri_dropout
                 )
                 smri_out_dim = smri_hid_2
+                
+                
+            self.smri_only = model_config.get('smri_only', False)
+            if self.use_smri and self.smri_only:
+                self.smri_only_classifier = nn.Linear(smri_out_dim, 2)
 
             fmri_embed_dim = 8 * roi_num
             fusion_input_dim = fmri_embed_dim + smri_out_dim
@@ -399,6 +404,18 @@ class DHGFormer(nn.Module):
             features[:, self.cluster_order, :][:, :, self.cluster_order]
 
     def forward(self, time_series: torch.Tensor, node_features: torch.Tensor, smri_features: torch.Tensor = None):
+        
+        if self.use_smri and self.smri_only:
+            if self.smri_encoder_type == 'multiview_gcn':
+                smri_embedding = self._forward_mvgcn(smri_features)
+            else:
+                smri_embedding = self.smri_encoder(smri_features)
+
+            prediction = self.smri_only_classifier(smri_embedding)
+            dummy_matrix = torch.zeros(
+                smri_features.shape[0], 1, 1, device=smri_features.device)
+            dummy_edge_var = torch.tensor(0.0, device=smri_features.device)
+            return prediction, dummy_matrix, dummy_edge_var
         # Reorder inputs according to cluster mapping
         time_series = self.reorder_nodes(time_series, dimension=1)
         node_features = self.reorder_nodes(node_features, dimension=2)
