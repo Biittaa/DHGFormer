@@ -64,17 +64,31 @@ class BasicTrain:
             data_in, pearson, label,smri = data_in.to(
                 device), pearson.to(device), label.to(device), smri.to(device)
 
-            inputs, nodes, targets_a, targets_b, lam, smri_mixed = mixup_data(
-                data_in, pearson, label, 1, device, extra=smri)
+            # inputs, nodes, targets_a, targets_b, lam, smri_mixed = mixup_data(
+            #     data_in, pearson, label, 1, device, extra=smri)
 
-            output, learnable_matrix, edge_variance = self.model(inputs, nodes, smri_mixed)
+            # output, learnable_matrix, edge_variance = self.model(inputs, nodes, smri_mixed)
 
-            loss = 2 * mixup_criterion(
-                self.loss_fn, output, targets_a, targets_b, lam)
+            # loss = 2 * mixup_criterion(
+            #     self.loss_fn, output, targets_a, targets_b, lam)
+            
+            
+            smri_only = getattr(self.model, 'use_smri', False) and getattr(self.model, 'smri_only', False)
 
-            if self.group_loss:
-                loss += mixup_cluster_loss(learnable_matrix,
-                                           targets_a, targets_b, lam)
+            if smri_only:
+                output, learnable_matrix, edge_variance = self.model(data_in, pearson, smri)
+                loss = self.loss_fn(output, label)          # بدون mixup، بدون ضرب در ۲
+            else:
+                inputs, nodes, targets_a, targets_b, lam, smri_mixed = mixup_data(
+                    data_in, pearson, label, 1, device, extra=smri)
+                output, learnable_matrix, edge_variance = self.model(inputs, nodes, smri_mixed)
+                loss = 2 * mixup_criterion(self.loss_fn, output, targets_a, targets_b, lam)
+                if self.group_loss:
+                    loss += mixup_cluster_loss(learnable_matrix, targets_a, targets_b, lam)
+
+            # if self.group_loss:
+            #     loss += mixup_cluster_loss(learnable_matrix,
+            #                                targets_a, targets_b, lam)
 
             if self.sparsity_loss:
                 sparsity_loss = self.sparsity_loss_weight * \

@@ -343,20 +343,120 @@ def _load_subject_order(order_path):
 
 
 
+# def build_view_node_features(dataset_config, num_subjects, labels=None):
+#     """Builds, per view, a (num_subjects, n_nodes, n_subfeat) array aligned to
+#     the same subject_order used by fMRI (time_series_subjects_order), z-scored
+#     per column.
+
+#     اگر dataset_config['use_smri_ridge_fs'] برابر True باشد، ابتدا Ridge/RFE
+#     (دقیقاً مثل نوت‌بوک) روی کل ماتریس sMRI اجرا می‌شود؛ هر ستون sub-feature
+#     که انتخاب نشود برای همه‌ی node ها NaN می‌ماند و توسط قانون قبلی
+#     all-NaN-column صفر می‌شود. در این حالت `labels` الزامی است.
+
+#     Returns:
+#         view_node_names    : view -> list[str]
+#         view_node_features : view -> np.ndarray (num_subjects, n_nodes, n_subfeat)
+#     """
+#     subject_order = _load_subject_order(dataset_config["time_series_subjects_order"])
+#     if len(subject_order) != num_subjects:
+#         raise ValueError(
+#             f"Subject-order file contains {len(subject_order)} subjects, "
+#             f"but fMRI contains {num_subjects} subjects."
+#         )
+
+#     smri_df = pd.read_csv(dataset_config["smri_path"])
+#     smri_df["SUB_ID"] = smri_df["subject_id"].apply(
+#         lambda s: str(int(re.findall(r"\d+", str(s))[-1]))
+#         if re.findall(r"\d+", str(s)) else None
+#     )
+#     smri_df = smri_df.set_index("SUB_ID")
+#     smri_df = smri_df.reindex(subject_order)
+
+#     use_ridge_fs = dataset_config.get("use_smri_ridge_fs", False)
+#     selected_cols = None
+#     if use_ridge_fs:
+#         if labels is None:
+#             raise ValueError("build_view_node_features: labels is required when use_smri_ridge_fs=True")
+#         n_select = dataset_config.get("smri_ridge_num_features", 500)
+#         selected_cols = ridge_rfe_select_columns(smri_df, labels, n_select)
+
+#     view_node_names = {}
+#     view_node_features = {}
+
+#     for view, cfg in VIEW_CONFIGS.items():
+#         roi_entries = []
+#         multi_prefix = len(cfg['prefixes']) > 1
+#         for prefix in cfg['prefixes']:
+#             roi_map = _parse_roi_columns(prefix, smri_df.columns, cfg['suffixes'])
+#             for roi_name, suf_to_col in roi_map.items():
+#                 node_name = f'{prefix}_{roi_name}' if multi_prefix else roi_name
+#                 col_list = [suf_to_col.get(suf) for suf in cfg['suffixes']]
+#                 roi_entries.append((node_name, col_list))
+
+#         n_nodes = len(roi_entries)
+#         n_subfeat = len(cfg['suffixes'])
+#         mat = np.full((num_subjects, n_nodes, n_subfeat), np.nan, dtype=np.float64)
+
+#         n_dropped_by_ridge = 0
+#         for node_idx, (node_name, col_list) in enumerate(roi_entries):
+#             for suf_idx, col_name in enumerate(col_list):
+#                 if col_name is None:
+#                     continue
+#                 if selected_cols is not None and col_name not in selected_cols:
+#                     n_dropped_by_ridge += 1
+#                     continue
+#                 mat[:, node_idx, suf_idx] = pd.to_numeric(smri_df[col_name], errors='coerce').values
+
+#         if selected_cols is not None and n_dropped_by_ridge:
+#             print(f'[smri_graph_build] view "{view}": {n_dropped_by_ridge} sub-feature column(s) zeroed out (not selected by Ridge/RFE)')
+
+#         # flat = mat.reshape(num_subjects, -1)
+#         # col_means = np.nanmean(flat, axis=0)
+#         # col_means = np.nan_to_num(col_means, nan=0.0)
+#         # nan_rows, nan_cols = np.where(np.isnan(flat))
+#         # flat[nan_rows, nan_cols] = col_means[nan_cols]
+#         # flat = mat.reshape(num_subjects, -1)
+
+#         # strategy = dataset_config.get("smri_impute_strategy", "mean")
+#         # knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
+
+#         # imputer = make_imputer(strategy, knn_k)
+#         # flat = imputer.fit_transform(flat)
+
+#         # flat = StandardScaler().fit_transform(flat)
+
+#         # mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
+
+#         # flat = StandardScaler().fit_transform(flat)
+#         # mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
+#         flat = mat.reshape(num_subjects, -1)
+
+#         all_nan_cols = np.all(np.isnan(flat), axis=0)
+#         if all_nan_cols.any():
+#             flat[:, all_nan_cols] = 0.0
+
+#         remaining_nan = np.isnan(flat)
+#         if remaining_nan.any():
+#             strategy = dataset_config.get("smri_impute_strategy", "mean")
+#             knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
+#             imputer = make_imputer(strategy, knn_k)
+#             partial_cols = ~all_nan_cols
+#             flat[:, partial_cols] = imputer.fit_transform(flat[:, partial_cols])
+
+#         flat = StandardScaler().fit_transform(flat)
+#         mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
+
+#         # flat = StandardScaler().fit_transform(flat)
+#         # mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
+
+#         view_node_names[view] = [name for name, _ in roi_entries]
+#         view_node_features[view] = mat.astype(np.float32)
+#         print(f'[smri_graph_build] view "{view}": {n_nodes} ROI nodes x {n_subfeat} sub-features')
+
+#     return view_node_names, view_node_features    
+
+
 def build_view_node_features(dataset_config, num_subjects, labels=None):
-    """Builds, per view, a (num_subjects, n_nodes, n_subfeat) array aligned to
-    the same subject_order used by fMRI (time_series_subjects_order), z-scored
-    per column.
-
-    اگر dataset_config['use_smri_ridge_fs'] برابر True باشد، ابتدا Ridge/RFE
-    (دقیقاً مثل نوت‌بوک) روی کل ماتریس sMRI اجرا می‌شود؛ هر ستون sub-feature
-    که انتخاب نشود برای همه‌ی node ها NaN می‌ماند و توسط قانون قبلی
-    all-NaN-column صفر می‌شود. در این حالت `labels` الزامی است.
-
-    Returns:
-        view_node_names    : view -> list[str]
-        view_node_features : view -> np.ndarray (num_subjects, n_nodes, n_subfeat)
-    """
     subject_order = _load_subject_order(dataset_config["time_series_subjects_order"])
     if len(subject_order) != num_subjects:
         raise ValueError(
@@ -376,13 +476,13 @@ def build_view_node_features(dataset_config, num_subjects, labels=None):
     selected_cols = None
     if use_ridge_fs:
         if labels is None:
-            raise ValueError("build_view_node_features: labels is required when use_smri_ridge_fs=True")
+            raise ValueError("labels is required when use_smri_ridge_fs=True")
         n_select = dataset_config.get("smri_ridge_num_features", 500)
         selected_cols = ridge_rfe_select_columns(smri_df, labels, n_select)
 
-    view_node_names = {}
-    view_node_features = {}
-
+    # ---- فاز ۱: ساخت raw matrix هر view، بدون ایمپیوت ----
+    raw_mats = {}
+    roi_entries_per_view = {}
     for view, cfg in VIEW_CONFIGS.items():
         roi_entries = []
         multi_prefix = len(cfg['prefixes']) > 1
@@ -408,52 +508,69 @@ def build_view_node_features(dataset_config, num_subjects, labels=None):
                 mat[:, node_idx, suf_idx] = pd.to_numeric(smri_df[col_name], errors='coerce').values
 
         if selected_cols is not None and n_dropped_by_ridge:
-            print(f'[smri_graph_build] view "{view}": {n_dropped_by_ridge} sub-feature column(s) zeroed out (not selected by Ridge/RFE)')
+            print(f'[smri_graph_build] view "{view}": {n_dropped_by_ridge} column(s) zeroed (not in Ridge/RFE)')
 
-        # flat = mat.reshape(num_subjects, -1)
-        # col_means = np.nanmean(flat, axis=0)
-        # col_means = np.nan_to_num(col_means, nan=0.0)
-        # nan_rows, nan_cols = np.where(np.isnan(flat))
-        # flat[nan_rows, nan_cols] = col_means[nan_cols]
-        # flat = mat.reshape(num_subjects, -1)
-
-        # strategy = dataset_config.get("smri_impute_strategy", "mean")
-        # knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
-
-        # imputer = make_imputer(strategy, knn_k)
-        # flat = imputer.fit_transform(flat)
-
-        # flat = StandardScaler().fit_transform(flat)
-
-        # mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
-
-        # flat = StandardScaler().fit_transform(flat)
-        # mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
-        flat = mat.reshape(num_subjects, -1)
-
-        all_nan_cols = np.all(np.isnan(flat), axis=0)
-        if all_nan_cols.any():
-            flat[:, all_nan_cols] = 0.0
-
-        remaining_nan = np.isnan(flat)
-        if remaining_nan.any():
-            strategy = dataset_config.get("smri_impute_strategy", "mean")
-            knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
-            imputer = make_imputer(strategy, knn_k)
-            partial_cols = ~all_nan_cols
-            flat[:, partial_cols] = imputer.fit_transform(flat[:, partial_cols])
-
-        flat = StandardScaler().fit_transform(flat)
-        mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
-
-        # flat = StandardScaler().fit_transform(flat)
-        # mat = flat.reshape(num_subjects, n_nodes, n_subfeat)
-
-        view_node_names[view] = [name for name, _ in roi_entries]
-        view_node_features[view] = mat.astype(np.float32)
+        raw_mats[view] = mat
+        roi_entries_per_view[view] = roi_entries
         print(f'[smri_graph_build] view "{view}": {n_nodes} ROI nodes x {n_subfeat} sub-features')
 
-    return view_node_names, view_node_features    
+    # ---- فاز ۲: concat کل view ها و یک بار ایمپیوت (دقیقاً مثل نوت‌بوک) ----
+    flats = [raw_mats[v].reshape(num_subjects, -1) for v in VIEW_NAMES]
+    split_sizes = [f.shape[1] for f in flats]
+    master_flat = np.concatenate(flats, axis=1)
+
+    all_nan_cols = np.all(np.isnan(master_flat), axis=0)
+    if all_nan_cols.any():
+        master_flat[:, all_nan_cols] = 0.0
+
+    remaining_nan = np.isnan(master_flat)
+    if remaining_nan.any():
+        strategy = dataset_config.get("smri_impute_strategy", "mean")
+        knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
+        imputer = make_imputer(strategy, knn_k)
+        partial_cols = ~all_nan_cols
+        master_flat[:, partial_cols] = imputer.fit_transform(master_flat[:, partial_cols])
+
+    # ---- فاز ۳: split دوباره + استانداردسازی هر view ----
+    view_node_names = {}
+    view_node_features = {}
+    offset = 0
+    for view, size in zip(VIEW_NAMES, split_sizes):
+        n_nodes = raw_mats[view].shape[1]
+        n_subfeat = raw_mats[view].shape[2]
+        flat_v = master_flat[:, offset:offset + size]
+        offset += size
+
+        flat_v = StandardScaler().fit_transform(flat_v)
+        mat = flat_v.reshape(num_subjects, n_nodes, n_subfeat)
+
+        view_node_names[view] = [name for name, _ in roi_entries_per_view[view]]
+        view_node_features[view] = mat.astype(np.float32)
+
+    return view_node_names, view_node_features
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _compute_pearson_similarity(node_feats):

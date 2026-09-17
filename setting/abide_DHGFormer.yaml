@@ -1,12 +1,12 @@
 data:
   dataset: ABIDE
   atlas: cc200
-  batch_size: 16
+  batch_size: 32
   test_batch_size: 16
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
-  use_smri: false
+  use_smri: true
   smri_encoder_type: multiview_gcn
   mvgcn_k_neighbors:
     aseg: 8
@@ -39,9 +39,9 @@ model:
   temporal_num_heads: 4
   temporal_num_layers: 1
   temporal_dropout: 0.3
-  mvgcn_hid_c: 16
+  mvgcn_hid_c: 128
   mvgcn_K: 5
-  mvgcn_dropout: 0.5
+  mvgcn_dropout: 0.3
   mvgcn_graph_mode: static
   mvgcn_conv_type: cheb
   mvgcn_fusion_type: concat
@@ -49,8 +49,8 @@ model:
 
 train:
   method: normal
-  lr: 1.0e-4
-  weight_decay: 1.0e-4
+  lr: 1.0e-3
+  weight_decay: 1.0e-8
   epochs: 100
   optimizer: adam
   group_loss: false
