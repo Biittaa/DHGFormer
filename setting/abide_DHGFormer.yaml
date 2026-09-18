@@ -53,8 +53,8 @@ train:
   weight_decay: 1.0e-4
   epochs: 100
   optimizer: adam
-  group_loss: false
-  sparsity_loss: false
+  group_loss: true
+  sparsity_loss: true
   sparsity_loss_weight: 1.0e-4
   log_folder: result
   pure_gnn_graph: pearson
