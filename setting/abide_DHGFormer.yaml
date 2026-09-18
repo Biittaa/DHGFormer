@@ -49,8 +49,8 @@ model:
 
 train:
   method: normal
-  lr: 1.0e-3
-  weight_decay: 1.0e-8
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
   epochs: 100
   optimizer: adam
   group_loss: false
