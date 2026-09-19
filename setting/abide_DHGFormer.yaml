@@ -1,7 +1,7 @@
 data:
   dataset: ABIDE
   atlas: cc200
-  batch_size: 32
+  batch_size: 16
   test_batch_size: 16
   val_batch_size: 16
   train_set: 0.7
@@ -19,7 +19,7 @@ data:
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
   smri_impute_strategy: knn
   smri_impute_knn_neighbors: 10
-  mvgcn_num_layers: 2
+  # mvgcn_num_layers: 2
   use_combat: true
 
 model:
@@ -53,6 +53,7 @@ model:
   mvgcn_conv_type: cheb
   mvgcn_fusion_type: concat
   smri_only: true
+  mvgcn_num_layers: 2
 
 train:
   method: normal
@@ -60,8 +61,8 @@ train:
   weight_decay: 1.0e-4
   epochs: 100
   optimizer: adam
-  group_loss: true
-  sparsity_loss: true
+  group_loss: false
+  sparsity_loss: false
   sparsity_loss_weight: 1.0e-4
   log_folder: result
   pure_gnn_graph: pearson

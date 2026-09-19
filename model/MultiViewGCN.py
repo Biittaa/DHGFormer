@@ -263,8 +263,13 @@ class MultiViewGCN(nn.Module):
         })
         
         
-        
-        
+        self.view_bns = nn.ModuleDict({
+            view: nn.ModuleList([
+                nn.BatchNorm1d(hid_c) for _ in range(self.num_layers[view])
+            ])
+            for view in view_names
+        })
+                
         
         
         self.relu = nn.ReLU(inplace=True)
@@ -341,6 +346,7 @@ class MultiViewGCN(nn.Module):
             h = x
             for conv in self.view_convs[view]:
                 h_new = run_view_conv(conv, self.conv_type, h, edge_index, edge_weight)
+                h_new = self.view_bns[view][i](h_new)
                 h_new = self.relu(h_new)
                 h_new = self.dropout(h_new)
                 h = h_new + h if h.shape == h_new.shape else h_new   # residual از لایه دوم به بعد
