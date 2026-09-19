@@ -20,6 +20,7 @@ data:
   smri_impute_strategy: knn
   smri_impute_knn_neighbors: 10
   mvgcn_num_layers: 2
+  use_combat: true
 
 model:
   type: DHGFormer

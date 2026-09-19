@@ -456,7 +456,8 @@ def _load_subject_order(order_path):
 #     return view_node_names, view_node_features    
 
 
-def build_view_node_features(dataset_config, num_subjects, labels=None):
+def build_view_node_features(dataset_config, num_subjects, labels=None, train_idx=None, site=None):
+    fit_rows = np.arange(num_subjects) if train_idx is None else np.asarray(train_idx)
     subject_order = _load_subject_order(dataset_config["time_series_subjects_order"])
     if len(subject_order) != num_subjects:
         raise ValueError(
@@ -530,7 +531,20 @@ def build_view_node_features(dataset_config, num_subjects, labels=None):
         imputer = make_imputer(strategy, knn_k)
         partial_cols = ~all_nan_cols
         master_flat[:, partial_cols] = imputer.fit_transform(master_flat[:, partial_cols])
+    
+    
+    if dataset_config.get("use_combat", False):
+        from neuroHarmonize import harmonizationLearn, harmonizationApply
+        covars = pd.DataFrame({"SITE": np.asarray(site).astype(str)})
+        ok = master_flat[fit_rows].std(axis=0) > 1e-8      # ستون ثابت در train را کنار بگذار
+        model, _ = harmonizationLearn(master_flat[fit_rows][:, ok],
+                                      covars.iloc[fit_rows].reset_index(drop=True))
+        master_flat[:, ok] = harmonizationApply(master_flat[:, ok],
+                                                covars.reset_index(drop=True), model)
 
+    
+    
+    
     # ---- فاز ۳: split دوباره + استانداردسازی هر view ----
     view_node_names = {}
     view_node_features = {}

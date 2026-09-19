@@ -262,9 +262,18 @@ def init_dataloader(dataset_config):
     # if use_smri and smri_encoder_type == "multiview_gcn":
     #     from imports.smri_graph_build import build_view_node_features, VIEW_NAMES
     #     _, view_node_features = build_view_node_features(dataset_config, num_subjects)
+    
+    length = final_fc.shape[0]
+    train_length = int(length * dataset_config["train_set"])
+    val_length = int(length * dataset_config["val_set"])
+    perm = torch.randperm(length).tolist()
+    train_idx = perm[:train_length]
+    val_idx = perm[train_length:train_length + val_length]
+    test_idx = perm[train_length + val_length:]
+    
     if use_smri and smri_encoder_type == "multiview_gcn":
         from imports.smri_graph_build import build_view_node_features, VIEW_NAMES
-        _, view_node_features = build_view_node_features(dataset_config, num_subjects, labels=labels)
+        _, view_node_features = build_view_node_features(dataset_config, num_subjects, labels=labels, train_idx=train_idx, site=data.get("site"))
         n_nodes_per_view = {v: arr.shape[1] for v, arr in view_node_features.items()}
         n_subfeat_per_view = {v: arr.shape[2] for v, arr in view_node_features.items()}
 
@@ -287,20 +296,25 @@ def init_dataloader(dataset_config):
         torch.from_numpy(data).float()
         for data in (final_fc, final_pearson, labels, pseudo_arr, smri_features)
     ]
-    length = final_fc.shape[0]
-    train_length = int(length * dataset_config["train_set"])
-    val_length = int(length * dataset_config["val_set"])
+    # length = final_fc.shape[0]
+    # train_length = int(length * dataset_config["train_set"])
+    # val_length = int(length * dataset_config["val_set"])
 
     dataset = utils.TensorDataset(
         final_fc, final_pearson, labels, pseudo_arr, smri_features
     )
 
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        dataset, [train_length, val_length, length - train_length - val_length])
-
+    # train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+    #     dataset, [train_length, val_length, length - train_length - val_length])
+    train_dataset = utils.Subset(dataset, train_idx)
+    val_dataset = utils.Subset(dataset, val_idx)
+    test_dataset = utils.Subset(dataset, test_idx)
+    
+    
+    
     if use_smri and smri_encoder_type == "multiview_gcn":
         from imports.smri_graph_build import build_fold_graphs
-        train_idx = train_dataset.indices  # torch's Subset exposes this directly
+        # train_idx = train_dataset.indices  # torch's Subset exposes this directly
         k_per_view = dataset_config.get("mvgcn_k_neighbors", {"aseg": 8, "aparc": 32, "wmparc": 16})
         base_edge_index, base_edge_weight = build_fold_graphs(view_node_features, train_idx, k_per_view)
         mvgcn_fold_graphs = {
