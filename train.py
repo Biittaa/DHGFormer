@@ -75,18 +75,17 @@ class BasicTrain:
             
             smri_only = getattr(self.model, 'use_smri', False) and getattr(self.model, 'smri_only', False)
 
-            # if smri_only:
-            #     output, learnable_matrix, edge_variance = self.model(data_in, pearson, smri)
-            #     loss = self.loss_fn(output, label)          # بدون mixup، بدون ضرب در ۲
-            
             if smri_only:
-                lam = np.random.beta(1.0, 1.0)
-                idx = torch.randperm(smri.shape[0]).to(device)
-                smri_mixed = lam * smri + (1 - lam) * smri[idx]
-                label_b = label[idx]
+                output, learnable_matrix, edge_variance = self.model(data_in, pearson, smri)
+                loss = self.loss_fn(output, label)          # بدون mixup، بدون ضرب در ۲
+            # if smri_only:
+            #     lam = np.random.beta(1.0, 1.0)
+            #     idx = torch.randperm(smri.shape[0]).to(device)
+            #     smri_mixed = lam * smri + (1 - lam) * smri[idx]
+            #     label_b = label[idx]
 
-                output, learnable_matrix, edge_variance = self.model(data_in, pearson, smri_mixed)
-                loss = lam * self.loss_fn(output, label) + (1 - lam) * self.loss_fn(output, label_b)
+            #     output, learnable_matrix, edge_variance = self.model(data_in, pearson, smri_mixed)
+            #     loss = lam * self.loss_fn(output, label) + (1 - lam) * self.loss_fn(output, label_b)
             else:
                 inputs, nodes, targets_a, targets_b, lam, smri_mixed = mixup_data(
                     data_in, pearson, label, 1, device, extra=smri)
