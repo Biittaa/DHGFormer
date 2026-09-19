@@ -44,7 +44,7 @@ model:
   mvgcn_hid_c: 128
   mvgcn_K: 5
   mvgcn_dropout: 0.3
-  mvgcn_graph_mode: per_subject
+  mvgcn_graph_mode: static
   mvgcn_graph_proj_dim: 16
   mvgcn_k_neighbors:
     aseg: 8
@@ -53,7 +53,7 @@ model:
   mvgcn_conv_type: cheb
   mvgcn_fusion_type: concat
   smri_only: true
-  mvgcn_num_layers: 2
+  mvgcn_num_layers: 1
 
 train:
   method: normal
