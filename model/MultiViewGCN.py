@@ -292,8 +292,13 @@ class MultiViewGCN(nn.Module):
             x = view_inputs[view]
             batch_size = x.shape[0] // n_nodes
             base_ei = self.base_edge_index[view]
+            
+            if self.graph_mode == 'per_subject':
+                x_b = x.reshape(batch_size, n_nodes, -1)
+                edge_index, edge_weight = build_per_subject_graph(
+                    x_b, self.graph_proj[view], self.k_per_view.get(view, 16))
 
-            if self.graph_mode in LEARNABLE_GRAPH_MODES:
+            elif self.graph_mode in LEARNABLE_GRAPH_MODES:
                 edge_weight = self.edge_weight_params[view].repeat(batch_size)
                 offsets = (torch.arange(batch_size, device=x.device) * n_nodes).view(-1, 1, 1)
                 tiled = torch.as_tensor(base_ei, device=x.device).unsqueeze(0) + offsets
