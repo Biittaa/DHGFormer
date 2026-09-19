@@ -19,6 +19,7 @@ data:
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
   smri_impute_strategy: knn
   smri_impute_knn_neighbors: 10
+  mvgcn_num_layers: 2
 
 model:
   type: DHGFormer
@@ -54,8 +55,8 @@ model:
 
 train:
   method: normal
-  lr: 1.0e-3
-  weight_decay: 1.0e-8
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
   epochs: 100
   optimizer: adam
   group_loss: true

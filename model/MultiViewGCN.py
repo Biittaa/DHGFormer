@@ -226,7 +226,7 @@ class MultiViewGCN(nn.Module):
     def __init__(self, view_names, n_nodes_per_view, n_subfeat_per_view, hid_c,
                  K, dropout_rate, base_edge_index, base_edge_weight,
                  graph_mode='static', conv_type='cheb', fusion_type='concat',
-                 k_per_view=None, graph_proj_dim=16):
+                 k_per_view=None, graph_proj_dim=16, num_layers=1):
         super().__init__()
         self.view_names = view_names
         self.n_views = len(view_names)
@@ -239,10 +239,34 @@ class MultiViewGCN(nn.Module):
         if self.fusion_type not in FUSION_TYPES:
             raise ValueError(f"fusion_type must be one of {FUSION_TYPES}, got: {fusion_type!r}")
 
+        # self.view_convs = nn.ModuleDict({
+        #     view: build_view_conv(conv_type, n_subfeat_per_view[view], hid_c, K)
+        #     for view in view_names
+        # })
+        
+        self.num_layers = {
+            v: (num_layers[v] if isinstance(num_layers, dict) else num_layers)
+            for v in view_names
+        }
+        for v, n in self.num_layers.items():
+            if n < 1:
+                raise ValueError(f"num_layers for view {v!r} must be >= 1, got {n}")
+
         self.view_convs = nn.ModuleDict({
-            view: build_view_conv(conv_type, n_subfeat_per_view[view], hid_c, K)
+            view: nn.ModuleList([
+                build_view_conv(conv_type,
+                                n_subfeat_per_view[view] if i == 0 else hid_c,
+                                hid_c, K)
+                for i in range(self.num_layers[view])
+            ])
             for view in view_names
         })
+        
+        
+        
+        
+        
+        
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout_rate)
         self.fusion_module = build_fusion_module(fusion_type, hid_c, self.n_views)
@@ -311,9 +335,15 @@ class MultiViewGCN(nn.Module):
 
             batch_vec = torch.arange(batch_size, device=x.device).repeat_interleave(n_nodes)
 
-            h = run_view_conv(self.view_convs[view], self.conv_type, x, edge_index, edge_weight)
-            h = self.relu(h)
-            h = self.dropout(h)
+            # h = run_view_conv(self.view_convs[view], self.conv_type, x, edge_index, edge_weight)
+            # h = self.relu(h)
+            # h = self.dropout(h)
+            h = x
+            for conv in self.view_convs[view]:
+                h_new = run_view_conv(conv, self.conv_type, h, edge_index, edge_weight)
+                h_new = self.relu(h_new)
+                h_new = self.dropout(h_new)
+                h = h_new + h if h.shape == h_new.shape else h_new   # residual از لایه دوم به بعد
             h = tg.nn.global_mean_pool(h, batch_vec)
             view_embeddings.append(h)
 
