@@ -344,7 +344,7 @@ class MultiViewGCN(nn.Module):
             # h = self.relu(h)
             # h = self.dropout(h)
             h = x
-            for conv in self.view_convs[view]:
+            for i, conv in enumerate(self.view_convs[view]):
                 h_new = run_view_conv(conv, self.conv_type, h, edge_index, edge_weight)
                 h_new = self.view_bns[view][i](h_new)
                 h_new = self.relu(h_new)
