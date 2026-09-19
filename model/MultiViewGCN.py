@@ -17,6 +17,54 @@ EDGE_SCRATCH_INIT_SCALE = 0.1
 EDGE_DEGREE_EPS = 1e-6
 
 
+import torch.nn.functional as F
+
+def build_per_subject_graph(x_bnf, proj, k):
+    B, n, _ = x_bnf.shape
+    dev = x_bnf.device
+    z = F.normalize(proj(x_bnf), dim=-1)                 # (B, n, d)
+    sim = torch.bmm(z, z.transpose(1, 2))                # (B, n, n) cosine
+    eye = torch.eye(n, dtype=torch.bool, device=dev).unsqueeze(0)
+    sim = sim.masked_fill(eye, float('-inf'))            # بدون self-loop
+
+    k = min(k, n - 1)
+    vals, idx = sim.topk(k, dim=-1)                      # (B, n, k)
+
+    offs = (torch.arange(B, device=dev) * n).view(B, 1, 1)
+    src = torch.arange(n, device=dev).view(1, n, 1).expand(B, n, k) + offs
+    dst = idx + offs
+
+    edge_index = torch.stack([src.reshape(-1), dst.reshape(-1)], dim=0)
+    edge_weight = ((vals + 1) / 2).reshape(-1) + 1e-6    # [0,1]، مثبت، gradient-friendly
+
+    # symmetrize
+    edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+    edge_weight = torch.cat([edge_weight, edge_weight], dim=0)
+    return edge_index, edge_weight
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def build_view_conv(conv_type, in_c, hid_c, K):
     if conv_type == 'cheb':
         return SafeChebConv(in_c, hid_c, K, normalization='sym', bias=True)
@@ -177,7 +225,8 @@ class MultiViewGCN(nn.Module):
 
     def __init__(self, view_names, n_nodes_per_view, n_subfeat_per_view, hid_c,
                  K, dropout_rate, base_edge_index, base_edge_weight,
-                 graph_mode='static', conv_type='cheb', fusion_type='concat'):
+                 graph_mode='static', conv_type='cheb', fusion_type='concat',
+                 k_per_view=None, graph_proj_dim=16):
         super().__init__()
         self.view_names = view_names
         self.n_views = len(view_names)
@@ -221,9 +270,18 @@ class MultiViewGCN(nn.Module):
                             -EDGE_SCRATCH_INIT_SCALE, EDGE_SCRATCH_INIT_SCALE))
                     for view in view_names
                 })
+        elif self.graph_mode == 'per_subject':
+                self.k_per_view = k_per_view or {}
+                self.graph_proj = nn.ModuleDict({
+                    view: nn.Linear(n_subfeat_per_view[view], graph_proj_dim)
+                    for view in view_names
+                })
         elif self.graph_mode != 'static':
             raise ValueError(
-                f"graph_mode must be 'static', 'learnable', or 'learnable_scratch', got: {graph_mode!r}")
+                f"graph_mode must be 'static', 'learnable', 'learnable_scratch' or 'per_subject', got: {graph_mode!r}")
+        # elif self.graph_mode != 'static':
+        #     raise ValueError(
+        #         f"graph_mode must be 'static', 'learnable', or 'learnable_scratch', got: {graph_mode!r}")
 
     def forward_features(self, view_inputs):
         """view_inputs: dict view -> tensor (batch_size * n_nodes, n_subfeat),

@@ -283,6 +283,8 @@ class DHGFormer(nn.Module):
                     graph_mode=model_config.get('mvgcn_graph_mode', 'static'),
                     conv_type=model_config.get('mvgcn_conv_type', 'cheb'),
                     fusion_type=model_config.get('mvgcn_fusion_type', 'concat'),
+                    k_per_view=model_config.get('mvgcn_k_neighbors', {'aseg': 8, 'aparc': 32, 'wmparc': 16}),
+                    graph_proj_dim=model_config.get('mvgcn_graph_proj_dim', 16),
                 )
                 self._mvgcn_view_names = mvgcn_view_meta['view_names']
                 self._mvgcn_n_nodes_per_view = mvgcn_view_meta['n_nodes_per_view']

@@ -42,15 +42,20 @@ model:
   mvgcn_hid_c: 128
   mvgcn_K: 5
   mvgcn_dropout: 0.3
-  mvgcn_graph_mode: static
+  mvgcn_graph_mode: per_subject
+  mvgcn_graph_proj_dim: 16
+  mvgcn_k_neighbors:
+    aseg: 8
+    aparc: 32
+    wmparc: 16
   mvgcn_conv_type: cheb
   mvgcn_fusion_type: concat
   smri_only: true
 
 train:
   method: normal
-  lr: 1.0e-4
-  weight_decay: 1.0e-4
+  lr: 1.0e-3
+  weight_decay: 1.0e-8
   epochs: 100
   optimizer: adam
   group_loss: true
