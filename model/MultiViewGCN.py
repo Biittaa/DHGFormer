@@ -370,11 +370,11 @@ class MultiViewGCN(nn.Module):
                     h = self.att_pool[view](h, batch_vec)
             else:
                 h = tg.nn.global_mean_pool(h, batch_vec)
-                view_embeddings.append(h)
-            fused = fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
-            if self.extra_dim > 0 and extra is not None:
+            view_embeddings.append(h)
+        fused = fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
+        if self.extra_dim > 0 and extra is not None:
                 fused = torch.cat([fused, self.extra_mlp(extra)], dim=1)
-            return fused
+        return fused
         # return fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
 
     def forward(self, view_inputs):
