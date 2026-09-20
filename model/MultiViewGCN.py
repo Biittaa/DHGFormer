@@ -327,7 +327,7 @@ class MultiViewGCN(nn.Module):
         #     raise ValueError(
         #         f"graph_mode must be 'static', 'learnable', or 'learnable_scratch', got: {graph_mode!r}")
 
-    def forward_features(self, view_inputs):
+    def forward_features(self, view_inputs, extra=None):
         """view_inputs: dict view -> tensor (batch_size * n_nodes, n_subfeat),
         already on the target device."""
         view_embeddings = []
