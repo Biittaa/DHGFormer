@@ -17,6 +17,7 @@ data:
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
+  pheno_path: /content/drive/MyDrive/DHGFormer/Phenotypic_V1_0b_preprocessed1.csv
   smri_impute_strategy: knn
   smri_impute_knn_neighbors: 10
   # mvgcn_num_layers: 2
@@ -54,7 +55,7 @@ model:
   mvgcn_fusion_type: concat
   smri_only: true
   mvgcn_num_layers: 2
-  mvgcn_pool_type: attention
+  mvgcn_pool_type: mean
 
 train:
   method: normal

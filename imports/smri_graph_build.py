@@ -195,15 +195,57 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
         partial_cols = ~all_nan_cols
         master_flat[:, partial_cols] = imputer.fit_transform(master_flat[:, partial_cols])
     
-    
-    if dataset_config.get("use_combat", False):
-        from neuroHarmonize import harmonizationLearn, harmonizationApply
-        covars = pd.DataFrame({"SITE": np.asarray(site).astype(str)})
-        ok = master_flat[fit_rows].std(axis=0) > 1e-8      # ستون ثابت در train را کنار بگذار
-        model, _ = harmonizationLearn(master_flat[fit_rows][:, ok],
-                                      covars.iloc[fit_rows].reset_index(drop=True))
-        master_flat[:, ok] = harmonizationApply(master_flat[:, ok],
-                                                covars.reset_index(drop=True), model)
+        if dataset_config.get("use_combat", False):
+            from neuroHarmonize import harmonizationLearn, harmonizationApply
+
+        pheno = pd.read_csv(dataset_config["pheno_path"])
+        pheno["SUB_ID"] = pheno["SUB_ID"].astype(int).astype(str)
+        pheno = pheno.set_index("SUB_ID").reindex(subject_order)
+        if pheno["SITE_ID"].isna().any():
+            raise ValueError("Some subjects in subject_order are missing from the phenotypic file.")
+
+        age = pd.to_numeric(pheno["AGE_AT_SCAN"], errors="coerce")
+        age = age.where(age > 0)
+        age = age.fillna(age.iloc[fit_rows].median())      # median فقط از train
+        sex = (pd.to_numeric(pheno["SEX"], errors="coerce") == 2).astype(int)
+
+        covars = pd.DataFrame({
+            "SITE": pheno["SITE_ID"].astype(str).values,
+            "AGE": age.values,
+            "SEX": sex.values,
+        })
+
+        if site is not None:
+            n_bad = int((np.asarray(site).astype(str) != covars["SITE"].values).sum())
+            print(f"[smri_graph_build] site mismatch vs abide.npy: {n_bad}")
+
+        train_sites = set(covars["SITE"].iloc[fit_rows])
+        unseen = set(covars["SITE"]) - train_sites
+        if unseen:
+            raise ValueError(f"Sites with no train subject in this split: {unseen}")
+
+        tr = master_flat[fit_rows]
+        site_tr = covars["SITE"].iloc[fit_rows].values
+        ok = tr.std(axis=0) > 1e-8
+        for s in train_sites:
+            ok &= tr[site_tr == s].std(axis=0) > 1e-8
+
+        model, _ = harmonizationLearn(
+            tr[:, ok], covars.iloc[fit_rows].reset_index(drop=True))
+        master_flat[:, ok] = harmonizationApply(
+            master_flat[:, ok], covars.reset_index(drop=True), model)
+
+        if not np.isfinite(master_flat).all():
+            raise ValueError("Non-finite values after ComBat")
+        print(f"[smri_graph_build] ComBat (SITE+AGE+SEX): harmonized {int(ok.sum())}/{ok.size} columns")
+    # if dataset_config.get("use_combat", False):
+    #     from neuroHarmonize import harmonizationLearn, harmonizationApply
+    #     covars = pd.DataFrame({"SITE": np.asarray(site).astype(str)})
+    #     ok = master_flat[fit_rows].std(axis=0) > 1e-8      # ستون ثابت در train را کنار بگذار
+    #     model, _ = harmonizationLearn(master_flat[fit_rows][:, ok],
+    #                                   covars.iloc[fit_rows].reset_index(drop=True))
+    #     master_flat[:, ok] = harmonizationApply(master_flat[:, ok],
+    #                                             covars.reset_index(drop=True), model)
 
     
     
