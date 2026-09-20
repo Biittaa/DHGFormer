@@ -20,8 +20,12 @@ data:
   pheno_path: /content/drive/MyDrive/DHGFormer/Phenotypic_V1_0b_preprocessed1.csv
   smri_impute_strategy: knn
   smri_impute_knn_neighbors: 10
-  # mvgcn_num_layers: 2
   use_combat: true
+  use_smri_global: true       
+  smri_global_cols: null     
+  use_pheno: true
+  pheno_cols: [AGE_AT_SCAN, SEX, FIQ, VIQ, PIQ]
+
 
 model:
   type: DHGFormer
@@ -56,6 +60,7 @@ model:
   smri_only: true
   mvgcn_num_layers: 2
   mvgcn_pool_type: mean
+  mvgcn_extra_hid: 16
 
 train:
   method: normal

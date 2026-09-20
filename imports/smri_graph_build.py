@@ -335,3 +335,61 @@ def build_fold_graphs(view_node_features, train_idx, k_per_view):
         base_edge_weight[view] = edge_weight
         print(f'[smri_graph_build] view "{view}": k={k}, {edge_index.shape[1]} directed edges (from train subjects only)')
     return base_edge_index, base_edge_weight
+
+
+
+
+
+
+
+
+GLOBAL_KEY = '_Measure_'
+DEFAULT_PHENO_COLS = ['AGE_AT_SCAN', 'SEX', 'FIQ', 'VIQ', 'PIQ']
+
+
+def build_extra_features(dataset_config, num_subjects, train_idx=None):
+    use_global = dataset_config.get("use_smri_global", False)
+    use_pheno = dataset_config.get("use_pheno", False)
+    if not (use_global or use_pheno):
+        return None, []
+
+    fit_rows = np.arange(num_subjects) if train_idx is None else np.asarray(train_idx)
+    subject_order = _load_subject_order(dataset_config["time_series_subjects_order"])
+    blocks, names = [], []
+
+    if use_global:
+        smri_df = pd.read_csv(dataset_config["smri_path"])
+        smri_df["SUB_ID"] = smri_df["subject_id"].apply(
+            lambda s: str(int(re.findall(r"\d+", str(s))[-1]))
+            if re.findall(r"\d+", str(s)) else None)
+        smri_df = smri_df.set_index("SUB_ID").reindex(subject_order)
+        cols = dataset_config.get("smri_global_cols") or \
+            [c for c in smri_df.columns if GLOBAL_KEY in str(c)]
+        blocks.append(smri_df[cols].apply(pd.to_numeric, errors='coerce').values.astype(np.float64))
+        names += cols
+
+    if use_pheno:
+        pheno = pd.read_csv(dataset_config["pheno_path"])
+        pheno["SUB_ID"] = pheno["SUB_ID"].astype(int).astype(str)
+        pheno = pheno.set_index("SUB_ID").reindex(subject_order)
+        cols = dataset_config.get("pheno_cols", DEFAULT_PHENO_COLS)
+        p = []
+        for c in cols:
+            v = pd.to_numeric(pheno[c], errors='coerce')
+            if c == 'SEX':                       # 1=male, 2=female
+                v = (v == 2).astype(float).where(v.notna())
+            else:                                # -9999 و مقادیر نامعتبر -> NaN
+                v = v.where(v > 0)
+            p.append(v.values.astype(np.float64))
+        blocks.append(np.stack(p, axis=1))
+        names += cols
+
+    X = np.concatenate(blocks, axis=1)
+    med = np.nan_to_num(np.nanmedian(X[fit_rows], axis=0), nan=0.0)
+    r, c = np.where(np.isnan(X))
+    X[r, c] = med[c]
+    mu, sd = X[fit_rows].mean(0), X[fit_rows].std(0)
+    sd[sd < 1e-8] = 1.0
+    X = (X - mu) / sd
+    print(f"[smri_graph_build] extra features: {X.shape[1]} cols -> {names}")
+    return X.astype(np.float32), names

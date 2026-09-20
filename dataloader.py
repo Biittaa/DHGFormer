@@ -14,6 +14,9 @@ from nilearn import plotting, datasets
 import random
 # from .imports.smri_graph_build import make_imputer
 from imports.smri_graph_build import make_imputer
+from imports.smri_graph_build import build_view_node_features, build_extra_features, VIEW_NAMES
+
+
 
 class StandardScaler:
     """
@@ -279,12 +282,19 @@ def init_dataloader(dataset_config):
 
         flat_per_view = [view_node_features[v].reshape(num_subjects, -1) for v in VIEW_NAMES]
         smri_features = np.concatenate(flat_per_view, axis=1)
+
+        extra, _ = build_extra_features(dataset_config, num_subjects, train_idx=train_idx)
+        extra_dim = 0
+        if extra is not None:
+            smri_features = np.concatenate([smri_features, extra], axis=1)
+            extra_dim = extra.shape[1]
         smri_dim = smri_features.shape[1]
 
         mvgcn_view_meta = {
             "view_names": VIEW_NAMES,
             "n_nodes_per_view": n_nodes_per_view,
             "n_subfeat_per_view": n_subfeat_per_view,
+            "extra_dim": extra_dim,          
         }
     elif use_smri:
         smri_features, smri_dim = load_smri_features(dataset_config, num_subjects)

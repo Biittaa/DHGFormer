@@ -287,11 +287,14 @@ class DHGFormer(nn.Module):
                     graph_proj_dim=model_config.get('mvgcn_graph_proj_dim', 16),
                     num_layers=model_config.get('mvgcn_num_layers', 1),
                     pool_type=model_config.get('mvgcn_pool_type', 'mean'),
+                    extra_dim=mvgcn_view_meta.get('extra_dim', 0),
+                    extra_hid=model_config.get('mvgcn_extra_hid', 16),
                 )
                 self._mvgcn_view_names = mvgcn_view_meta['view_names']
                 self._mvgcn_n_nodes_per_view = mvgcn_view_meta['n_nodes_per_view']
                 self._mvgcn_n_subfeat_per_view = mvgcn_view_meta['n_subfeat_per_view']
                 smri_out_dim = self.smri_encoder.out_dim
+                self._mvgcn_extra_dim = mvgcn_view_meta.get('extra_dim', 0)
 
             elif smri_encoder_type == 'transformer':
                 smri_patch_size = model_config.get('smri_patch_size', 32)
@@ -511,4 +514,6 @@ class DHGFormer(nn.Module):
             view_inputs[view] = smri_features[:, offset:offset + view_len].reshape(
                 batch_size * n_nodes, n_subfeat)
             offset += view_len
-        return self.smri_encoder.forward_features(view_inputs)
+        extra = smri_features[:, offset:] if self._mvgcn_extra_dim > 0 else None
+        return self.smri_encoder.forward_features(view_inputs, extra)
+        # return self.smri_encoder.forward_features(view_inputs)

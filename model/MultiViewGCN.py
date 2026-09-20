@@ -229,7 +229,7 @@ class MultiViewGCN(nn.Module):
     def __init__(self, view_names, n_nodes_per_view, n_subfeat_per_view, hid_c,
                  K, dropout_rate, base_edge_index, base_edge_weight,
                  graph_mode='static', conv_type='cheb', fusion_type='concat',
-                 k_per_view=None, graph_proj_dim=16, num_layers=1, pool_type='mean'):
+                 k_per_view=None, graph_proj_dim=16, num_layers=1, pool_type='mean', extra_dim=0, extra_hid=16):
         super().__init__()
         self.view_names = view_names
         self.n_views = len(view_names)
@@ -289,7 +289,11 @@ class MultiViewGCN(nn.Module):
         # 'concat' -> hid_c * n_views ; every other fusion_type -> hid_c.
         # DHGFormer reads this to size fusion_classifier's input.
         self.out_dim = hid_c * self.n_views if fusion_type == 'concat' else hid_c
-
+        self.extra_dim = extra_dim
+        if extra_dim > 0:
+            self.extra_mlp = nn.Sequential(
+                nn.Linear(extra_dim, extra_hid), nn.ReLU(inplace=True), nn.Dropout(dropout_rate))
+            self.out_dim += extra_hid
         # Untiled (single-copy) topology/weights per view -- plain numpy, not
         # buffers/parameters: re-tiled to the actual batch size on every
         # forward_features() call (see below), and moved to the right device
@@ -367,8 +371,11 @@ class MultiViewGCN(nn.Module):
             else:
                 h = tg.nn.global_mean_pool(h, batch_vec)
             view_embeddings.append(h)
-
-        return fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
+            fused = fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
+            if self.extra_dim > 0 and extra is not None:
+                fused = torch.cat([fused, self.extra_mlp(extra)], dim=1)
+            return fused
+        # return fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
 
     def forward(self, view_inputs):
         return self.forward_features(view_inputs)
