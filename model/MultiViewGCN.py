@@ -7,7 +7,10 @@ try:
     from torch_geometric.utils import maybe_num_nodes
 except ImportError:
     from torch_geometric.utils.num_nodes import maybe_num_nodes
-
+try:
+    from torch_geometric.nn.aggr import AttentionalAggregation
+except ImportError:  # نسخه‌های قدیمی PyG
+    from torch_geometric.nn import GlobalAttention as AttentionalAggregation
 
 CONV_TYPES = ('cheb', 'gcn', 'graph', 'gat', 'gin', 'sage', 'tag', 'sgc', 'arma', 'bern')
 GAT_HEADS = 1
@@ -226,7 +229,7 @@ class MultiViewGCN(nn.Module):
     def __init__(self, view_names, n_nodes_per_view, n_subfeat_per_view, hid_c,
                  K, dropout_rate, base_edge_index, base_edge_weight,
                  graph_mode='static', conv_type='cheb', fusion_type='concat',
-                 k_per_view=None, graph_proj_dim=16, num_layers=1):
+                 k_per_view=None, graph_proj_dim=16, num_layers=1, pool_type='mean'):
         super().__init__()
         self.view_names = view_names
         self.n_views = len(view_names)
@@ -239,11 +242,7 @@ class MultiViewGCN(nn.Module):
         if self.fusion_type not in FUSION_TYPES:
             raise ValueError(f"fusion_type must be one of {FUSION_TYPES}, got: {fusion_type!r}")
 
-        # self.view_convs = nn.ModuleDict({
-        #     view: build_view_conv(conv_type, n_subfeat_per_view[view], hid_c, K)
-        #     for view in view_names
-        # })
-        
+
         self.num_layers = {
             v: (num_layers[v] if isinstance(num_layers, dict) else num_layers)
             for v in view_names
@@ -262,7 +261,19 @@ class MultiViewGCN(nn.Module):
             for view in view_names
         })
         
-        
+        self.pool_type = pool_type
+        if pool_type == 'attention':
+            self.att_pool = nn.ModuleDict({
+                view: AttentionalAggregation(gate_nn=nn.Sequential(
+                    nn.Linear(hid_c, hid_c // 2),
+                    nn.ReLU(),
+                    nn.Linear(hid_c // 2, 1)))
+                for view in view_names
+            })
+        elif pool_type != 'mean':
+            raise ValueError(f"pool_type must be 'mean' or 'attention', got: {pool_type!r}")
+                
+                
         # self.view_bns = nn.ModuleDict({
         #     view: nn.ModuleList([
         #         nn.BatchNorm1d(hid_c) for _ in range(self.num_layers[view])
@@ -350,7 +361,11 @@ class MultiViewGCN(nn.Module):
                 h_new = self.relu(h_new)
                 h_new = self.dropout(h_new)
                 h = h_new + h if h.shape == h_new.shape else h_new   # residual از لایه دوم به بعد
-            h = tg.nn.global_mean_pool(h, batch_vec)
+            # h = tg.nn.global_mean_pool(h, batch_vec)
+            if self.pool_type == 'attention':
+                    h = self.att_pool[view](h, batch_vec)
+            else:
+                h = tg.nn.global_mean_pool(h, batch_vec)
             view_embeddings.append(h)
 
         return fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)

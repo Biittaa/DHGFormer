@@ -286,6 +286,7 @@ class DHGFormer(nn.Module):
                     k_per_view=model_config.get('mvgcn_k_neighbors', {'aseg': 8, 'aparc': 32, 'wmparc': 16}),
                     graph_proj_dim=model_config.get('mvgcn_graph_proj_dim', 16),
                     num_layers=model_config.get('mvgcn_num_layers', 1),
+                    pool_type=model_config.get('mvgcn_pool_type', 'mean'),
                 )
                 self._mvgcn_view_names = mvgcn_view_meta['view_names']
                 self._mvgcn_n_nodes_per_view = mvgcn_view_meta['n_nodes_per_view']

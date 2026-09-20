@@ -41,7 +41,7 @@ model:
   temporal_num_heads: 4
   temporal_num_layers: 1
   temporal_dropout: 0.3
-  mvgcn_hid_c: 128
+  mvgcn_hid_c: 64
   mvgcn_K: 5
   mvgcn_dropout: 0.3
   mvgcn_graph_mode: static
@@ -53,7 +53,8 @@ model:
   mvgcn_conv_type: cheb
   mvgcn_fusion_type: concat
   smri_only: true
-  mvgcn_num_layers: 1
+  mvgcn_num_layers: 2
+  mvgcn_pool_type: attention
 
 train:
   method: normal
