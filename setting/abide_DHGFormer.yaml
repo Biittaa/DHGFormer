@@ -61,6 +61,9 @@ model:
   mvgcn_num_layers: 2
   mvgcn_pool_type: mean
   mvgcn_extra_hid: 16
+  cross_d_model: 32
+  cross_num_heads: 4
+  cross_dropout: 0.1
 
 train:
   method: normal

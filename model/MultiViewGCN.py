@@ -327,7 +327,7 @@ class MultiViewGCN(nn.Module):
         #     raise ValueError(
         #         f"graph_mode must be 'static', 'learnable', or 'learnable_scratch', got: {graph_mode!r}")
 
-    def forward_features(self, view_inputs, extra=None):
+    def forward_features(self, view_inputs, extra=None, return_tokens=False):
         """view_inputs: dict view -> tensor (batch_size * n_nodes, n_subfeat),
         already on the target device."""
         view_embeddings = []
@@ -371,6 +371,13 @@ class MultiViewGCN(nn.Module):
             else:
                 h = tg.nn.global_mean_pool(h, batch_vec)
             view_embeddings.append(h)
+            
+        if return_tokens:
+            tokens = torch.stack(view_embeddings, dim=1)          # (B, 3, hid_c)
+            if self.extra_dim > 0 and extra is not None:
+                tokens = torch.cat([tokens, self.extra_mlp(extra).unsqueeze(1)], dim=1)  # (B, 4, hid_c)
+            return tokens
+        # fused = fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
         fused = fuse_view_embeddings(self.fusion_type, self.fusion_module, view_embeddings)
         if self.extra_dim > 0 and extra is not None:
                 fused = torch.cat([fused, self.extra_mlp(extra)], dim=1)

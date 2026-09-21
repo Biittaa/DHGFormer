@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear
 import math
-from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder, WindowedTemporalTransformerEncoder
+from model.Encoder import FCEncoder, SMRIFCNEncoder, SMRITransformerEncoder, ModalityAttentionFusion, TemporalTransformerEncoder, WindowedTemporalTransformerEncoder, CrossModalAttentionFusion
 from model.MultiViewGCN import MultiViewGCN
 import pickle
 
@@ -126,7 +126,7 @@ class CrossGCNPredictor(nn.Module):
         # Combine original and propagated features
         return (node_features + propagated_features) / 2
 
-    def forward_features(self, adjacency_matrix, intra_adjacency, inter_adjacency, node_features):
+    def forward_features(self, adjacency_matrix, intra_adjacency, inter_adjacency, node_features, return_tokens=False):
         batch_size = intra_adjacency.shape[0]
 
         # First propagation layer
@@ -158,7 +158,8 @@ class CrossGCNPredictor(nn.Module):
         x = self.propagate_subnetwork_features(subnetwork_features, intra_features, self.subnetwork_ends)
         x = self.gcn2(x)
         x = self.bn3(x)
-
+        if return_tokens:
+            return x
         # Classifier
         x = x.view(batch_size, -1)
         # return self.classifier(x)
@@ -336,6 +337,18 @@ class DHGFormer(nn.Module):
                         smri_dim=smri_out_dim,
                         hidden_dim=fusion_hidden_dim
                     )
+                    
+                    
+            elif self.fusion_method == 'cross_attention':
+                assert smri_encoder_type == 'multiview_gcn', "cross_attention needs multiview_gcn tokens"
+                d = model_config.get('cross_d_model', 32)
+                self.cross_fusion = CrossModalAttentionFusion(
+                    fmri_tok_dim=8,
+                    smri_tok_dim=model_config.get('mvgcn_hid_c', 16),
+                    d_model=d,
+                    num_heads=model_config.get('cross_num_heads', 4),
+                    dropout=model_config.get('cross_dropout', 0.1))
+                fusion_input_dim = 2 * d
             elif self.fusion_method != 'concat':
                 raise ValueError(f"Unknown fusion_method: {self.fusion_method}")
 
@@ -456,6 +469,11 @@ class DHGFormer(nn.Module):
         #     node_features
         # )
         
+        fmri_tokens = self.predictor.forward_features(
+            full_adjacency, intra_adjacency, inter_adjacency, node_features,
+            return_tokens=True)                                      # (B, 200, 8)
+        fmri_embedding = fmri_tokens.reshape(fmri_tokens.shape[0], -1)   # (B, 1600)
+        
         fmri_embedding = self.predictor.forward_features(
             full_adjacency,
             intra_adjacency,
@@ -482,15 +500,20 @@ class DHGFormer(nn.Module):
         #     prediction = self.predictor.classifier(fmri_embedding)
         
         if self.use_smri and smri_features is not None:
-            if self.smri_encoder_type == 'multiview_gcn':
-                smri_embedding = self._forward_mvgcn(smri_features)
+            if self.fusion_method == 'cross_attention':
+                smri_tokens = self._forward_mvgcn(smri_features, return_tokens=True)   # (B, 4, hid_c)
+                print(fmri_tokens.shape, smri_tokens.shape)
+                fused_embedding, self.last_cross_attn = self.cross_fusion(fmri_tokens, smri_tokens)
             else:
-                smri_embedding = self.smri_encoder(smri_features)
+                if self.smri_encoder_type == 'multiview_gcn':
+                    smri_embedding = self._forward_mvgcn(smri_features)
+                else:
+                    smri_embedding = self.smri_encoder(smri_features)
 
-            if self.fusion_method == 'attention':
-                fused_embedding, modality_weights = self.modality_fusion(fmri_embedding, smri_embedding)
-            else:  # concat
-                fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
+                if self.fusion_method == 'attention':
+                    fused_embedding, modality_weights = self.modality_fusion(fmri_embedding, smri_embedding)
+                else:  # concat
+                    fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
 
             prediction = self.fusion_classifier(fused_embedding)
         else:
@@ -500,7 +523,7 @@ class DHGFormer(nn.Module):
 
         return prediction, full_adjacency, edge_variance
     
-    def _forward_mvgcn(self, smri_features):
+    def _forward_mvgcn(self, smri_features, return_tokens=False):
         """Reshapes the flat (batch, D) sMRI tensor coming from the DataLoader
         back into the per-view (batch*n_nodes, n_subfeat) dict MultiViewGCN
         expects."""
@@ -515,5 +538,5 @@ class DHGFormer(nn.Module):
                 batch_size * n_nodes, n_subfeat)
             offset += view_len
         extra = smri_features[:, offset:] if self._mvgcn_extra_dim > 0 else None
-        return self.smri_encoder.forward_features(view_inputs, extra)
+        return self.smri_encoder.forward_features(view_inputs, extra, return_tokens=return_tokens)
         # return self.smri_encoder.forward_features(view_inputs)

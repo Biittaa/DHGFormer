@@ -357,3 +357,32 @@ class WindowedTemporalTransformerEncoder(torch.nn.Module):
 
         gate = torch.sigmoid(self.gate)
         return self.norm(x + gate * out)
+    
+    
+class CrossModalAttentionFusion(nn.Module):
+    def __init__(self, fmri_tok_dim, smri_tok_dim, d_model=32, num_heads=4, dropout=0.1):
+        super().__init__()
+        self.f_proj = nn.Linear(fmri_tok_dim, d_model)
+        self.s_proj = nn.Linear(smri_tok_dim, d_model)
+        self.f_norm = nn.LayerNorm(d_model)
+        self.s_norm = nn.LayerNorm(d_model)
+        self.f2s = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
+        self.s2f = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
+
+        def ffn():
+            return nn.Sequential(
+                nn.LayerNorm(d_model), nn.Linear(d_model, 2 * d_model), nn.GELU(),
+                nn.Dropout(dropout), nn.Linear(2 * d_model, d_model))
+        self.f_ffn, self.s_ffn = ffn(), ffn()
+        self.out_dim = 2 * d_model
+
+    def forward(self, f_tok, s_tok):
+        # f_tok: (B, 200, 8)   s_tok: (B, n_tokens, hid_c)
+        f, s = self.f_proj(f_tok), self.s_proj(s_tok)
+        fn, sn = self.f_norm(f), self.s_norm(s)
+        f_att, w_f2s = self.f2s(fn, sn, sn)   # query = fMRI, key/value = sMRI
+        s_att, w_s2f = self.s2f(sn, fn, fn)   # query = sMRI, key/value = fMRI
+        f, s = f + f_att, s + s_att
+        f, s = f + self.f_ffn(f), s + self.s_ffn(s)
+        fused = torch.cat([f.mean(1), s.mean(1)], dim=1)   # (B, 2*d_model)
+        return fused, {'f2s': w_f2s.detach(), 's2f': w_s2f.detach()}
