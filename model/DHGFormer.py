@@ -502,7 +502,7 @@ class DHGFormer(nn.Module):
         if self.use_smri and smri_features is not None:
             if self.fusion_method == 'cross_attention':
                 smri_tokens = self._forward_mvgcn(smri_features, return_tokens=True)   # (B, 4, hid_c)
-                print(fmri_tokens.shape, smri_tokens.shape)
+                # print(fmri_tokens.shape, smri_tokens.shape)
                 fused_embedding, self.last_cross_attn = self.cross_fusion(fmri_tokens, smri_tokens)
             else:
                 if self.smri_encoder_type == 'multiview_gcn':
