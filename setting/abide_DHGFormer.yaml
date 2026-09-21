@@ -13,7 +13,7 @@ data:
     aparc: 32
     wmparc: 16
   use_smri_ridge_fs: false
-  smri_ridge_num_features: 500
+  smri_ridge_num_features: 1435
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
@@ -48,7 +48,7 @@ model:
   temporal_dropout: 0.3
   mvgcn_hid_c: 64
   mvgcn_K: 5
-  mvgcn_dropout: 0.3
+  mvgcn_dropout: 0.5
   mvgcn_graph_mode: static
   mvgcn_graph_proj_dim: 16
   mvgcn_k_neighbors:
