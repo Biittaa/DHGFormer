@@ -36,7 +36,7 @@ model:
   graph_generation: product
   num_gru_layers: 4
   dropout: 0.5
-  fusion_method: concat
+  fusion_method: cross_attention
   smri_hid_1: 500
   smri_hid_2: 30
   smri_dropout: 0.5
