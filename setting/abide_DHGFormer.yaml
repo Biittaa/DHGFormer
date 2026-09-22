@@ -25,6 +25,10 @@ data:
   smri_global_cols: null     
   use_pheno: true
   pheno_cols: [AGE_AT_SCAN, SEX, FIQ, VIQ, PIQ]
+  mvgcn_graph_metric_per_view:
+    aseg: pearson
+    aparc: pearson
+    wmparc: pearson
 
 
 model:

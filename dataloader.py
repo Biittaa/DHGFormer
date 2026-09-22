@@ -262,9 +262,6 @@ def init_dataloader(dataset_config):
     mvgcn_view_meta = None
     mvgcn_fold_graphs = None
 
-    # if use_smri and smri_encoder_type == "multiview_gcn":
-    #     from imports.smri_graph_build import build_view_node_features, VIEW_NAMES
-    #     _, view_node_features = build_view_node_features(dataset_config, num_subjects)
     
     length = final_fc.shape[0]
     train_length = int(length * dataset_config["train_set"])
@@ -325,8 +322,12 @@ def init_dataloader(dataset_config):
     if use_smri and smri_encoder_type == "multiview_gcn":
         from imports.smri_graph_build import build_fold_graphs
         # train_idx = train_dataset.indices  # torch's Subset exposes this directly
+        # k_per_view = dataset_config.get("mvgcn_k_neighbors", {"aseg": 8, "aparc": 32, "wmparc": 16})
+        # base_edge_index, base_edge_weight = build_fold_graphs(view_node_features, train_idx, k_per_view)
         k_per_view = dataset_config.get("mvgcn_k_neighbors", {"aseg": 8, "aparc": 32, "wmparc": 16})
-        base_edge_index, base_edge_weight = build_fold_graphs(view_node_features, train_idx, k_per_view)
+        metric_per_view = dataset_config.get("mvgcn_graph_metric_per_view", {})  
+        base_edge_index, base_edge_weight = build_fold_graphs(
+           view_node_features, train_idx, k_per_view, metric_per_view=metric_per_view) 
         mvgcn_fold_graphs = {
             "base_edge_index": base_edge_index,
             "base_edge_weight": base_edge_weight,

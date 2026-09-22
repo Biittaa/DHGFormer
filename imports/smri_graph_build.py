@@ -5,6 +5,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import RidgeClassifier
 from sklearn.feature_selection import RFE
 
+# --- NEW: extra deps needed for the additional similarity metrics ---
+from scipy.stats import spearmanr
+from scipy.spatial.distance import pdist, squareform
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.covariance import LedoitWolf
+from sklearn.feature_selection import mutual_info_regression
+
 
 ASEG_STYLE_SUFFIXES = ['NVoxels', 'Volume_mm3', 'normMax', 'normMean', 'normMin', 'normRange', 'normStdDev']
 APARC_STYLE_SUFFIXES = ['NumVert', 'SurfArea', 'GrayVol', 'ThickAvg', 'ThickStd', 'MeanCurv', 'GausCurv', 'FoldInd', 'CurvInd']
@@ -16,9 +23,118 @@ VIEW_CONFIGS = {
 }
 VIEW_NAMES = list(VIEW_CONFIGS.keys())
 
+# --- NEW: which metrics build_covariance_graph accepts ---
+GRAPH_METRICS = ('pearson', 'spearman', 'cosine', 'euclidean',
+                 'partial_correlation', 'distance_correlation', 'mutual_information')
+DEFAULT_GRAPH_METRIC = 'pearson'
+
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
+
+
+# ============================================================
+# NEW: generalized similarity computation (ported from the
+# multiviewgcn.ipynb prototype notebook). Every metric returns an
+# (n_nodes, n_nodes) matrix; NaNs are cleaned up by the caller.
+# ============================================================
+def distance_correlation_matrix(node_feats):
+    """Fast vectorized pairwise Distance Correlation.
+    node_feats: (n_rows, n_nodes) -> returns (n_nodes, n_nodes), values in [0, 1]."""
+    X = np.asarray(node_feats, dtype=np.float64)
+    n_rows, n_nodes = X.shape
+
+    D = np.abs(X[:, None, :] - X[None, :, :])  # (n_rows, n_rows, n_nodes)
+    row_mean = D.mean(axis=1, keepdims=True)
+    col_mean = D.mean(axis=0, keepdims=True)
+    total_mean = D.mean(axis=(0, 1), keepdims=True)
+    A = D - row_mean - col_mean + total_mean
+    del D
+
+    A_flat = A.reshape(n_rows * n_rows, n_nodes)
+    dcov2 = (A_flat.T @ A_flat) / (n_rows * n_rows)
+    del A, A_flat
+
+    dvar = np.maximum(np.diag(dcov2), 0.0)
+    denominator = np.sqrt(np.outer(dvar, dvar))
+
+    sim = np.zeros_like(dcov2)
+    valid = denominator > 1e-12
+    sim[valid] = np.sqrt(np.maximum(dcov2[valid] / denominator[valid], 0.0))
+    sim[~np.isfinite(sim)] = 0.0
+    np.fill_diagonal(sim, 1.0)
+    return sim
+
+
+def mutual_information_matrix(node_feats):
+    """Pairwise Mutual Information between node columns, normalized to [0, 1].
+    NOTE: O(n_nodes^2) with an internal regressor fit per pair -- can be slow
+    for views with many nodes (e.g. aparc). Only run this once per fold on
+    train-only subjects (same pattern as build_fold_graphs already uses)."""
+    X = np.asarray(node_feats, dtype=np.float64)
+    n_rows, n_nodes = X.shape
+    sim = np.zeros((n_nodes, n_nodes), dtype=np.float64)
+
+    for i in range(n_nodes):
+        xi = X[:, i]
+        for j in range(i + 1, n_nodes):
+            xj = X[:, j]
+            if np.std(xi) < 1e-12 or np.std(xj) < 1e-12:
+                mi = 0.0
+            else:
+                mi = mutual_info_regression(xi.reshape(-1, 1), xj, random_state=42)[0]
+                mi = max(float(mi), 0.0) if np.isfinite(mi) else 0.0
+            sim[i, j] = mi
+            sim[j, i] = mi
+
+    max_mi = np.max(sim)
+    if max_mi > 0:
+        sim /= max_mi
+    np.fill_diagonal(sim, 1.0)
+    return sim
+
+
+def compute_similarity(node_feats, metric=DEFAULT_GRAPH_METRIC):
+    """node_feats: (n_rows, n_nodes) -- one row per (subject, sub-feature) pair,
+    one column per ROI node (see build_covariance_graph). Returns (n_nodes, n_nodes)."""
+    if metric == 'pearson':
+        sim = np.corrcoef(node_feats.T)
+
+    elif metric == 'spearman':
+        sim, _ = spearmanr(node_feats)
+        sim = np.asarray(sim, dtype=float)
+        if sim.ndim == 0:
+            n_nodes = node_feats.shape[1]
+            sim = np.zeros((n_nodes, n_nodes), dtype=float)
+            np.fill_diagonal(sim, 1.0)
+
+    elif metric == 'cosine':
+        sim = cosine_similarity(node_feats.T)
+
+    elif metric == 'euclidean':
+        dist = squareform(pdist(node_feats.T, metric='euclidean'))
+        sigma = np.median(dist[dist > 0])
+        sim = np.exp(-(dist ** 2) / (2 * sigma ** 2))
+
+    elif metric == 'partial_correlation':
+        lw = LedoitWolf()
+        lw.fit(node_feats)
+        precision = lw.precision_
+        d = np.sqrt(np.diag(precision))
+        d[d == 0] = 1e-8
+        sim = -precision / np.outer(d, d)
+
+    elif metric == 'distance_correlation':
+        sim = distance_correlation_matrix(node_feats)
+
+    elif metric == 'mutual_information':
+        sim = mutual_information_matrix(node_feats)
+
+    else:
+        raise ValueError(f"metric must be one of {GRAPH_METRICS}, got: {metric!r}")
+
+    return np.nan_to_num(sim, nan=0.0)
+
 
 def ridge_rfe_select_columns(smri_df, labels, n_select, step=100, verbose=1):
     feature_cols = [c for c in smri_df.columns
@@ -43,10 +159,6 @@ def ridge_rfe_select_columns(smri_df, labels, n_select, step=100, verbose=1):
     return selected_cols
 
 
-
-
-
-
 def make_imputer(strategy='mean', knn_neighbors=10):
     if strategy == 'mean':
         return SimpleImputer(strategy='mean')
@@ -59,7 +171,7 @@ def make_imputer(strategy='mean', knn_neighbors=10):
     else:
         raise ValueError(f'Unknown strategy: {strategy}')
 
-        
+
 def _parse_roi_columns(prefix, columns, suffixes):
     sorted_suffixes = sorted(suffixes, key=len, reverse=True)
     roi_map = {}
@@ -76,9 +188,6 @@ def _parse_roi_columns(prefix, columns, suffixes):
 
 
 def _load_subject_order(order_path):
-    """Same alignment logic as dataloader.load_smri_features / kfold_dataloader's
-    version -- kept identical on purpose so fMRI/sMRI subject alignment never
-    diverges between encoders."""
     order_df = pd.read_csv(order_path, sep="\t", header=None,
                             names=["index_in_drive", "subject_id", "site"], skiprows=2)
     order_df = order_df.dropna(subset=["subject_id"]).copy()
@@ -87,6 +196,7 @@ def _load_subject_order(order_path):
     )
     order_df = order_df[order_df["subject_id"].str.fullmatch(r"\d+")].copy()
     return order_df["subject_id"].tolist()
+
 
 ICV_CANDIDATES = ['aseg_Measure_ICV', 'wmparc_Measure_ICV']
 VOLUME_SUFFIXES = ('Volume_mm3', 'NVoxels', 'GrayVol')
@@ -100,7 +210,7 @@ def normalize_by_icv(smri_df, normalize_area=True):
 
     df = smri_df.copy()
     icv = pd.to_numeric(df[icv_col], errors='coerce')
-    icv = icv.where(icv > 0)              # صفر/منفی -> NaN (بعداً impute می‌شود)
+    icv = icv.where(icv > 0)
 
     n_vol = n_area = 0
     for col in df.columns:
@@ -115,7 +225,7 @@ def normalize_by_icv(smri_df, normalize_area=True):
     print(f"[smri_graph_build] ICV norm using '{icv_col}': "
           f"{n_vol} volume col(s), {n_area} area col(s), "
           f"{int(icv.isna().sum())} subject(s) without valid ICV")
-    return df    
+    return df
 
 
 def build_view_node_features(dataset_config, num_subjects, labels=None, train_idx=None, site=None):
@@ -135,7 +245,7 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
     smri_df = smri_df.set_index("SUB_ID")
     smri_df = smri_df.reindex(subject_order)
     if dataset_config.get("smri_etiv_norm", False):
-            smri_df = normalize_by_icv(smri_df)
+        smri_df = normalize_by_icv(smri_df)
 
     use_ridge_fs = dataset_config.get("use_smri_ridge_fs", False)
     selected_cols = None
@@ -145,7 +255,6 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
         n_select = dataset_config.get("smri_ridge_num_features", 500)
         selected_cols = ridge_rfe_select_columns(smri_df, labels, n_select)
 
-    # ---- فاز ۱: ساخت raw matrix هر view، بدون ایمپیوت ----
     raw_mats = {}
     roi_entries_per_view = {}
     for view, cfg in VIEW_CONFIGS.items():
@@ -194,7 +303,7 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
         imputer = make_imputer(strategy, knn_k)
         partial_cols = ~all_nan_cols
         master_flat[:, partial_cols] = imputer.fit_transform(master_flat[:, partial_cols])
-    
+
         if dataset_config.get("use_combat", False):
             from neuroHarmonize import harmonizationLearn, harmonizationApply
 
@@ -206,7 +315,7 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
 
         age = pd.to_numeric(pheno["AGE_AT_SCAN"], errors="coerce")
         age = age.where(age > 0)
-        age = age.fillna(age.iloc[fit_rows].median())      # median فقط از train
+        age = age.fillna(age.iloc[fit_rows].median())
         sex = (pd.to_numeric(pheno["SEX"], errors="coerce") == 2).astype(int)
 
         covars = pd.DataFrame({
@@ -238,18 +347,7 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
         if not np.isfinite(master_flat).all():
             raise ValueError("Non-finite values after ComBat")
         print(f"[smri_graph_build] ComBat (SITE+AGE+SEX): harmonized {int(ok.sum())}/{ok.size} columns")
-    # if dataset_config.get("use_combat", False):
-    #     from neuroHarmonize import harmonizationLearn, harmonizationApply
-    #     covars = pd.DataFrame({"SITE": np.asarray(site).astype(str)})
-    #     ok = master_flat[fit_rows].std(axis=0) > 1e-8      # ستون ثابت در train را کنار بگذار
-    #     model, _ = harmonizationLearn(master_flat[fit_rows][:, ok],
-    #                                   covars.iloc[fit_rows].reset_index(drop=True))
-    #     master_flat[:, ok] = harmonizationApply(master_flat[:, ok],
-    #                                             covars.reset_index(drop=True), model)
 
-    
-    
-    
     view_node_names = {}
     view_node_features = {}
     offset = 0
@@ -268,41 +366,16 @@ def build_view_node_features(dataset_config, num_subjects, labels=None, train_id
     return view_node_names, view_node_features
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _compute_pearson_similarity(node_feats):
-    sim = np.corrcoef(node_feats.T)
-    return np.nan_to_num(sim, nan=0.0)
-
-
-def build_covariance_graph(node_feats_3d_train, k):
+def build_covariance_graph(node_feats_3d_train, k, metric=DEFAULT_GRAPH_METRIC):
     """node_feats_3d_train: (n_train_subjects, n_nodes, n_subfeat) -- TRAIN
     subjects of the current fold ONLY, so val/test never leak into graph
-    topology or weights."""
+    topology or weights.
+
+    metric: one of GRAPH_METRICS -- see compute_similarity(). Default 'pearson'
+    keeps this byte-for-byte identical to the original behavior."""
     n_train, n_nodes, n_subfeat = node_feats_3d_train.shape
     node_feats = node_feats_3d_train.transpose(0, 2, 1).reshape(n_train * n_subfeat, n_nodes)
-    sim = _compute_pearson_similarity(node_feats)
+    sim = compute_similarity(node_feats, metric=metric)
     np.fill_diagonal(sim, -np.inf)
 
     edge_list, weight_list = [], []
@@ -323,24 +396,25 @@ def build_covariance_graph(node_feats_3d_train, k):
     return edge_index, edge_weight
 
 
-def build_fold_graphs(view_node_features, train_idx, k_per_view):
+def build_fold_graphs(view_node_features, train_idx, k_per_view, metric_per_view=None):
     """Per view, builds the untiled (single-copy) kNN graph from train_idx
-    subjects only. Call once per fold, with that fold's train_idx."""
+    subjects only. Call once per fold, with that fold's train_idx.
+
+    metric_per_view: optional dict {view_name: metric}. Any view missing from
+    the dict falls back to DEFAULT_GRAPH_METRIC ('pearson') -- so passing
+    None here reproduces the exact original behavior."""
+    metric_per_view = metric_per_view or {}
     base_edge_index = {}
     base_edge_weight = {}
     for view, feats in view_node_features.items():
         k = k_per_view.get(view, 32)
-        edge_index, edge_weight = build_covariance_graph(feats[train_idx], k=k)
+        metric = metric_per_view.get(view, DEFAULT_GRAPH_METRIC)
+        edge_index, edge_weight = build_covariance_graph(feats[train_idx], k=k, metric=metric)
         base_edge_index[view] = edge_index
         base_edge_weight[view] = edge_weight
-        print(f'[smri_graph_build] view "{view}": k={k}, {edge_index.shape[1]} directed edges (from train subjects only)')
+        print(f'[smri_graph_build] view "{view}": metric={metric}, k={k}, '
+              f'{edge_index.shape[1]} directed edges (from train subjects only)')
     return base_edge_index, base_edge_weight
-
-
-
-
-
-
 
 
 GLOBAL_KEY = '_Measure_'
@@ -376,9 +450,9 @@ def build_extra_features(dataset_config, num_subjects, train_idx=None):
         p = []
         for c in cols:
             v = pd.to_numeric(pheno[c], errors='coerce')
-            if c == 'SEX':                       # 1=male, 2=female
+            if c == 'SEX':
                 v = (v == 2).astype(float).where(v.notna())
-            else:                                # -9999 و مقادیر نامعتبر -> NaN
+            else:
                 v = v.where(v > 0)
             p.append(v.values.astype(np.float64))
         blocks.append(np.stack(p, axis=1))
