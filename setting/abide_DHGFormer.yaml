@@ -53,7 +53,7 @@ model:
   mvgcn_hid_c: 64
   mvgcn_K: 5
   mvgcn_dropout: 0.5
-  mvgcn_graph_mode: static
+  mvgcn_graph_mode: per_subject
   mvgcn_graph_proj_dim: 16
   mvgcn_k_neighbors:
     aseg: 8

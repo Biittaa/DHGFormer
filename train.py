@@ -173,7 +173,7 @@ class BasicTrain:
         for epoch in range(self.epochs):
             self.reset_meters()
             self.train_per_epoch(self.optimizers[0])
-            val_result, _ = self.test_per_epoch(self.val_dataloader,
+            val_result, val_con_matrix = self.test_per_epoch(self.val_dataloader,
                                              self.val_loss, self.val_accuracy)
 
             test_result, con_matrix = self.test_per_epoch(self.test_dataloader,
@@ -193,6 +193,16 @@ class BasicTrain:
             else:
                 SPE = 0
                 
+            if (val_con_matrix[0][0] + val_con_matrix[1][0]) != 0:
+                    VAL_SEN = val_con_matrix[0][0] / (val_con_matrix[0][0] + val_con_matrix[1][0])
+            else:
+                VAL_SEN = 0
+
+            if (val_con_matrix[1][1] + val_con_matrix[0][1]) != 0:
+                VAL_SPE = val_con_matrix[1][1] / (val_con_matrix[1][1] + val_con_matrix[0][1])
+            else:
+                VAL_SPE = 0
+                
                 
             if self.best_acc_val <= self.val_accuracy.avg:
                 self.best_acc_val = self.val_accuracy.avg
@@ -206,6 +216,9 @@ class BasicTrain:
                 self.best_f1 = test_result[-4]
                 self.best_train_acc = self.train_accuracy.avg
                 self.best_train_loss = self.train_loss.avg
+                self.best_val_sen = VAL_SEN
+                self.best_val_spe = VAL_SPE
+                self.best_val_f1 = val_result[-4]
 
             self.logger.info(" | ".join([
                 f'Epoch[{epoch}/{self.epochs}]',
@@ -213,6 +226,9 @@ class BasicTrain:
                 f'Train ACC:{self.train_accuracy.avg: .3f}%',
                 f'Val ACC:{self.val_accuracy.avg: .2f}%',
                 f'Val AUC:{val_result[0]:.2f}',
+                f'Val SEN:{VAL_SEN:.4f}',
+                f'Val SPE:{VAL_SPE:.4f}',
+                f'Val F1:{val_result[-4]:.4f}',
                 f'Test ACC:{self.test_accuracy.avg: .2f}%',
                 f'Test AUC:{test_result[0]:.4f}',
                 f'Test SEN:{SEN:.4f}',
@@ -222,7 +238,7 @@ class BasicTrain:
 
             ]))
 
-            txt += f'Epoch[{epoch}/{self.epochs}] '+f'Train Loss:{self.train_loss.avg: .3f} '+f'Train ACC:{self.train_accuracy.avg: .3f}% '+f'Val ACC:{self.val_accuracy.avg: .3f}% '+ f'Val AUC:{val_result[0]:.3f} '+f'Test ACC:{self.test_accuracy.avg: .3f}% '+f'Test AUC:{test_result[0]:.4f} '+f'Test SEN:{SEN:.4f} '+f'Test SPE:{SPE:.4f} '+f'Test F1:{test_result[-4]:.4f}'+'\n'
+            txt += f'Epoch[{epoch}/{self.epochs}] '+f'Train Loss:{self.train_loss.avg: .3f} '+f'Train ACC:{self.train_accuracy.avg: .3f}% '+f'Val ACC:{self.val_accuracy.avg: .3f}% '+ f'Val AUC:{val_result[0]:.3f} '+f'Val SEN:{VAL_SEN:.4f} '+f'Val SPE:{VAL_SPE:.4f} '+f'Val F1:{val_result[-4]:.4f} '+ f'Test ACC:{self.test_accuracy.avg: .3f}% '+f'Test AUC:{test_result[0]:.4f} '+f'Test SEN:{SEN:.4f} '+f'Test SPE:{SPE:.4f} '+f'Test F1:{test_result[-4]:.4f}'+'\n'
 
             training_process.append([self.train_accuracy.avg, self.train_loss.avg,
                                      self.val_loss.avg, self.test_loss.avg]
@@ -242,6 +258,9 @@ class BasicTrain:
                 'train_loss': self.best_train_loss,
                 'val_acc': self.best_acc_val,
                 'val_auc': self.best_auc_val,
+                'val_sen': self.best_val_sen,
+                'val_spe': self.best_val_spe,
+                'val_f1': self.best_val_f1,
                 'test_acc': self.best_acc,
                 'test_auc': self.best_auc_test,
                 'test_sen': self.best_sen,
