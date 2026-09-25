@@ -142,7 +142,9 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import yaml
 
-
+PROJECT_ROOT = "/content/DHGFormer"
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 # --------------------------------------------------------------------------
 # 0) Make sure we can import the repo's own modules (dataloader.py,
 #    model/DHGFormer.py, train.py) no matter where this script is invoked
