@@ -608,8 +608,8 @@ def rank_columns_by_score(score_vector):
 # --------------------------------------------------------------------------
 # 4) ROAR loop
 # --------------------------------------------------------------------------
-DEFAULT_ROAR_THRESHOLDS = [0.0, 0.01, 0.05, 0.075, 0.1, 0.2, 0.3, 0.4,
-                           0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+DEFAULT_ROAR_THRESHOLDS = [0.0, 0.05, 0.15, 0.35, 0.55, 0.75, 0.9]
+                        #    0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
 
 
 def run_roar(method_name, ranking_cols, baseline_metrics, config_filename, current_seed,
