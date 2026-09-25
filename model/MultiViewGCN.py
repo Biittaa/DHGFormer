@@ -9,7 +9,7 @@ except ImportError:
     from torch_geometric.utils.num_nodes import maybe_num_nodes
 try:
     from torch_geometric.nn.aggr import AttentionalAggregation
-except ImportError:  # نسخه‌های قدیمی PyG
+except ImportError:  
     from torch_geometric.nn import GlobalAttention as AttentionalAggregation
 
 CONV_TYPES = ('cheb', 'gcn', 'graph', 'gat', 'gin', 'sage', 'tag', 'sgc', 'arma', 'bern')
@@ -28,7 +28,7 @@ def build_per_subject_graph(x_bnf, proj, k):
     z = F.normalize(proj(x_bnf), dim=-1)                 # (B, n, d)
     sim = torch.bmm(z, z.transpose(1, 2))                # (B, n, n) cosine
     eye = torch.eye(n, dtype=torch.bool, device=dev).unsqueeze(0)
-    sim = sim.masked_fill(eye, float('-inf'))            # بدون self-loop
+    sim = sim.masked_fill(eye, float('-inf'))          
 
     k = min(k, n - 1)
     vals, idx = sim.topk(k, dim=-1)                      # (B, n, k)
@@ -38,34 +38,12 @@ def build_per_subject_graph(x_bnf, proj, k):
     dst = idx + offs
 
     edge_index = torch.stack([src.reshape(-1), dst.reshape(-1)], dim=0)
-    edge_weight = ((vals + 1) / 2).reshape(-1) + 1e-6    # [0,1]، مثبت، gradient-friendly
+    edge_weight = ((vals + 1) / 2).reshape(-1) + 1e-6    
 
     # symmetrize
     edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
     edge_weight = torch.cat([edge_weight, edge_weight], dim=0)
     return edge_index, edge_weight
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def build_view_conv(conv_type, in_c, hid_c, K):
@@ -272,16 +250,7 @@ class MultiViewGCN(nn.Module):
             })
         elif pool_type != 'mean':
             raise ValueError(f"pool_type must be 'mean' or 'attention', got: {pool_type!r}")
-                
-                
-        # self.view_bns = nn.ModuleDict({
-        #     view: nn.ModuleList([
-        #         nn.BatchNorm1d(hid_c) for _ in range(self.num_layers[view])
-        #     ])
-        #     for view in view_names
-        # })
-                
-        
+   
         
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout_rate)
@@ -355,9 +324,6 @@ class MultiViewGCN(nn.Module):
 
             batch_vec = torch.arange(batch_size, device=x.device).repeat_interleave(n_nodes)
 
-            # h = run_view_conv(self.view_convs[view], self.conv_type, x, edge_index, edge_weight)
-            # h = self.relu(h)
-            # h = self.dropout(h)
             h = x
             for i, conv in enumerate(self.view_convs[view]):
                 h_new = run_view_conv(conv, self.conv_type, h, edge_index, edge_weight)

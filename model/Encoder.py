@@ -159,7 +159,6 @@ class ModalityAttentionFusion(nn.Module):
     
     
     
-    
 class SMRITransformerEncoder(torch.nn.Module):
     """Lightweight Transformer sMRI encoder. Splits the raw feature vector
     into small patches (tokens) instead of treating every feature as its
@@ -208,55 +207,20 @@ class SMRITransformerEncoder(torch.nn.Module):
         cls_out = out[:, 0, :]
         return self.dropout(self.out_proj(cls_out))
     
-    
-# class TemporalTransformerEncoder(torch.nn.Module):
-#     """Self-attention روی محور زمان (T)، مستقل و به‌صورت batched برای هر ROI.
-#     ورودی/خروجی هر دو شکل (B, N, T) دارند تا بدون تغییر در FCEncoder یا هر
-#     جای دیگر pipeline جایگزین/اضافه بشه. کاملاً اختیاری است و از طریق
-#     model_config['use_temporal_transformer'] در yaml کنترل می‌شود."""
-
-#     def __init__(self, seq_len, embed_dim=32, num_heads=4, num_layers=1, dropout=0.1):
-#         super().__init__()
-#         self.seq_len = seq_len
-
-#         # هر گام زمانی (اسکالر) -> embed_dim
-#         self.value_proj = torch.nn.Linear(1, embed_dim)
-#         self.pos_embed = torch.nn.Parameter(torch.zeros(1, seq_len, embed_dim))
-#         torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
-
-#         encoder_layer = torch.nn.TransformerEncoderLayer(
-#             d_model=embed_dim, nhead=num_heads,
-#             dim_feedforward=embed_dim * 2, dropout=dropout,
-#             batch_first=True)
-#         self.transformer = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-#         # embed_dim -> اسکالر (بازگشت به مقیاس سری زمانی خام)
-#         self.out_proj = torch.nn.Linear(embed_dim, 1)
-#         self.dropout = torch.nn.Dropout(dropout)
-#         self.norm = torch.nn.LayerNorm(seq_len)
-
-#     def forward(self, x):
-#         # x: (B, N, T)
-#         B, N, T = x.shape
-#         assert T == self.seq_len, \
-#             f"TemporalTransformerEncoder expects T={self.seq_len}, got {T}"
-
-#         x_flat = x.reshape(B * N, T, 1)           # هر گام زمانی یک توکن
-#         tokens = self.value_proj(x_flat)           # (B*N, T, embed_dim)
-#         tokens = tokens + self.pos_embed
-
-#         out = self.transformer(tokens)             # (B*N, T, embed_dim)
-#         out = self.dropout(self.out_proj(out))      # (B*N, T, 1)
-#         out = out.squeeze(-1).reshape(B, N, T)       # (B, N, T)
-
-#         # residual connection: پایداری آموزش را حفظ می‌کند و به FCEncoder
-#         # چیزی در همان مقیاس/دامنه‌ی سری زمانی خام تحویل می‌دهد
-#         return self.norm(x + out)
-
-
 
 class TemporalTransformerEncoder(torch.nn.Module):
-    
+    """Self-attention across the time axis (T) of each ROI's timeseries,
+    applied independently per ROI (batched as B*N sequences of length T).
+
+    Each timepoint is treated as one token; a learned gate (initialized
+    near 0 via sigmoid(-3.0)) blends the attended output back into the
+    original signal via a residual connection, so the encoder starts as
+    a near-identity function and can gradually learn to use temporal
+    attention as training progresses.
+
+    Input/output shape: (B, N, T) -- drop-in replacement/addition before
+    FCEncoder without changing the rest of the pipeline.
+    """
 
     def __init__(self, seq_len, embed_dim=32, num_heads=4, num_layers=1, dropout=0.1):
         super().__init__()
@@ -301,7 +265,19 @@ class TemporalTransformerEncoder(torch.nn.Module):
     
     
 class WindowedTemporalTransformerEncoder(torch.nn.Module):
+    """Like TemporalTransformerEncoder, but attends over fixed-size windows
+    of consecutive timepoints instead of individual timepoints, reducing the
+    sequence length seen by the transformer from T to ceil(T/window_size)
+    tokens (cheaper attention, and each token captures local temporal
+    structure directly).
 
+    The sequence is zero-padded up to a multiple of window_size, patchified,
+    processed, and the padding is trimmed back off after reconstruction. As
+    in TemporalTransformerEncoder, a learned gate (initialized near 0 via
+    sigmoid(-3.0)) blends the result back via a residual connection.
+
+    Input/output shape: (B, N, T).
+    """
     def __init__(self, seq_len, window_size=10, embed_dim=32, num_heads=4,
                  num_layers=1, dropout=0.1):
         super().__init__()
@@ -322,7 +298,6 @@ class WindowedTemporalTransformerEncoder(torch.nn.Module):
         self.transformer = torch.nn.TransformerEncoder(
             encoder_layer, num_layers=num_layers)
 
-        # بازسازی هر توکن به همان window_size عدد خام (inverse patchify)
         self.out_proj = torch.nn.Linear(embed_dim, window_size)
         self.dropout = torch.nn.Dropout(dropout)
         self.norm = torch.nn.LayerNorm(seq_len)
@@ -351,7 +326,7 @@ class WindowedTemporalTransformerEncoder(torch.nn.Module):
         out = out.reshape(B * N, self.num_windows * self.window_size)
 
         if self.pad_len > 0:
-            out = out[:, :self.seq_len]                # برش padding اضافه
+            out = out[:, :self.seq_len]      
 
         out = out.reshape(B, N, T)
 
@@ -360,6 +335,14 @@ class WindowedTemporalTransformerEncoder(torch.nn.Module):
     
     
 class CrossModalAttentionFusion(nn.Module):
+    """Fuses fMRI ROI tokens and sMRI multi-view GCN tokens via bidirectional
+    cross-attention (fMRI attends to sMRI, and vice versa), instead of plain
+    concatenation. Each modality is projected to a shared d_model, refined
+    with a residual attention + FFN block, then mean-pooled and concatenated.
+
+    Returns the fused embedding plus both attention weight matrices (f2s,
+    s2f) for optional inspection/visualization of cross-modal attention.
+    """
     def __init__(self, fmri_tok_dim, smri_tok_dim, d_model=32, num_heads=4, dropout=0.1):
         super().__init__()
         self.f_proj = nn.Linear(fmri_tok_dim, d_model)

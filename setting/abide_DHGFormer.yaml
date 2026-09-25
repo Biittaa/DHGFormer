@@ -1,71 +1,71 @@
 data:
   dataset: ABIDE
-  atlas: cc200
+  atlas: cc200                        # used to pick pseudo_arr shape: cc200 / aal / cc400 / other (imports/read_abide_stats_parall.py & dataloader.py)
   batch_size: 16
   test_batch_size: 16
   val_batch_size: 16
   train_set: 0.7
   val_set: 0.1
   use_smri: true
-  smri_encoder_type: multiview_gcn
-  mvgcn_k_neighbors:
+  smri_encoder_type: multiview_gcn    # options: fcn | transformer | multiview_gcn (model/DHGFormer.py)
+  mvgcn_k_neighbors:                  # per-view kNN graph size, used when smri_encoder_type: multiview_gcn
     aseg: 8
     aparc: 32
     wmparc: 16
-  use_smri_ridge_fs: false
+  use_smri_ridge_fs: false            # Ridge/RFE feature selection, only applies when smri_encoder_type != multiview_gcn
   smri_ridge_num_features: 1435
   time_seires: /content/drive/MyDrive/DHGFormer/abide.npy
   time_series_subjects_order: /content/drive/MyDrive/DHGFormer/subject_order.txt
   smri_path: /content/drive/MyDrive/DHGFormer/abide_smri.csv
   pheno_path: /content/drive/MyDrive/DHGFormer/Phenotypic_V1_0b_preprocessed1.csv
-  smri_impute_strategy: knn
-  smri_impute_knn_neighbors: 10
-  use_combat: true
-  use_smri_global: true       
-  smri_global_cols: null     
-  use_pheno: true
+  smri_impute_strategy: knn           # options: mean | median | knn | iterative (imports/smri_graph_build.py: make_imputer)
+  smri_impute_knn_neighbors: 10       # used only when smri_impute_strategy: knn
+  use_combat: true                    # ComBat site harmonization (SITE+AGE+SEX), fit on train subjects only
+  use_smri_global: true               # append aseg/wmparc "_Measure_" global columns as extra features
+  smri_global_cols: null              # null = auto-detect all "_Measure_" columns; or pass an explicit column list
+  use_pheno: true                     # append phenotype columns (pheno_cols) as extra features
   pheno_cols: [AGE_AT_SCAN, SEX, FIQ, VIQ, PIQ]
-  mvgcn_graph_metric_per_view:
-    aseg: pearson
+  mvgcn_graph_metric_per_view:        # per-view similarity metric for the kNN graph, used when smri_encoder_type: multiview_gcn
+    aseg: pearson                     # options: pearson | spearman | cosine | euclidean | partial_correlation | distance_correlation | mutual_information (imports/smri_graph_build.py: GRAPH_METRICS)
     aparc: pearson
     wmparc: pearson
 
 
 model:
   type: DHGFormer
-  extractor_type: transformer
+  extractor_type: transformer         # fMRI feature extractor type (model/DHGFormer.py)
   embedding_size: 8
   window_size: 4
   cnn_pool_size: 16
-  graph_generation: product
+  graph_generation: product           # fMRI embedding -> adjacency matrix: linear | product (Embed2GraphByLinear / CrossEmbed2GraphByProduct)
   num_gru_layers: 4
   dropout: 0.5
-  fusion_method: cross_attention
-  smri_hid_1: 500
+  fusion_method: cross_attention      # fMRI/sMRI fusion: concat | attention | cross_attention (model/DHGFormer.py)
+  smri_hid_1: 500                     # used only by SMRIFCNEncoder (smri_encoder_type: fcn)
   smri_hid_2: 30
   smri_dropout: 0.5
   use_temporal_transformer: false
-  temporal_encoder_type: windowed
+  temporal_encoder_type: windowed     # options: pointwise (default) | windowed (model/Encoder.py)
   temporal_embed_dim: 16
   temporal_num_heads: 4
   temporal_num_layers: 1
   temporal_dropout: 0.3
-  mvgcn_hid_c: 64
+  mvgcn_hid_c: 64                     # used when smri_encoder_type: multiview_gcn
   mvgcn_K: 5
   mvgcn_dropout: 0.5
-  mvgcn_graph_mode: per_subject
-  mvgcn_graph_proj_dim: 16
+  mvgcn_graph_mode: per_subject       # options: static | learnable | learnable_scratch | per_subject (model/MultiViewGCN.py)
+  mvgcn_graph_proj_dim: 16            # used only when mvgcn_graph_mode: per_subject
   mvgcn_k_neighbors:
     aseg: 8
     aparc: 32
     wmparc: 16
-  mvgcn_conv_type: cheb
-  mvgcn_fusion_type: concat
-  smri_only: true
+  mvgcn_conv_type: cheb               # options: cheb | gcn | graph | gat | gin | sage | tag | sgc | arma | bern (model/MultiViewGCN.py: CONV_TYPES)
+  mvgcn_fusion_type: concat           # per-view embedding fusion: concat | sum | mean | attention | gated (model/MultiViewGCN.py: FUSION_TYPES)
+  smri_only: true                     # skip fMRI branch entirely, classify from sMRI embedding alone (train.py / DHGFormer.forward)
   mvgcn_num_layers: 2
-  mvgcn_pool_type: mean
-  mvgcn_extra_hid: 16
-  cross_d_model: 32
+  mvgcn_pool_type: mean               # per-view node pooling: mean | attention (model/MultiViewGCN.py)
+  mvgcn_extra_hid: 16                 # hidden dim for the extra-features MLP (use_smri_global / use_pheno), used when extra_dim > 0
+  cross_d_model: 32                   # used only when fusion_method: cross_attention (model/Encoder.py: CrossModalAttentionFusion)
   cross_num_heads: 4
   cross_dropout: 0.1
 

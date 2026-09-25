@@ -53,11 +53,6 @@ def load_smri_features(dataset_config, num_subjects):
     order_df = order_df.dropna(subset=["subject_id"]).copy()
     
     
-    # order_df["subject_id"] = (
-    #     order_df["subject_id"]
-    #     .astype(str)
-    #     .str.strip()
-    # )
     
     order_df["subject_id"] = (
         order_df["subject_id"]
@@ -79,11 +74,6 @@ def load_smri_features(dataset_config, num_subjects):
     
     smri_df = pd.read_csv(dataset_config["smri_path"])
     
-    # smri_df["SUB_ID"] = smri_df["subject_id"].apply(
-    #     lambda s: re.findall(r"\d+", str(s))[-1]
-    #     if re.findall(r"\d+", str(s))
-    #     else None
-    # )
     
     smri_df["SUB_ID"] = smri_df["subject_id"].apply(
         lambda s: str(int(re.findall(r"\d+", str(s))[-1]))
@@ -128,10 +118,6 @@ def load_smri_features(dataset_config, num_subjects):
 
     print(f"sMRI missing subjects: {missing_count}")
     
-    # col_means = np.nanmean(smri_features, axis=0)
-    # col_means = np.nan_to_num(col_means, nan=0.0)
-    # nan_rows, nan_cols = np.where(np.isnan(smri_features))
-    # smri_features[nan_rows, nan_cols] = col_means[nan_cols]
     strategy = dataset_config.get("smri_impute_strategy", "mean")
     knn_k = dataset_config.get("smri_impute_knn_neighbors", 10)
     imputer = make_imputer(strategy, knn_k)
@@ -152,81 +138,6 @@ def load_smri_features(dataset_config, num_subjects):
 
     return smri_features, feature_dim
 
-
-
-
-        
-# def init_dataloader(dataset_config):
-#     data = np.load(dataset_config["time_seires"], allow_pickle=True).item()
-#     final_fc = data["timeseires"]
-#     final_pearson = data["corr"]
-#     labels = data["label"]
-
-
-#     _, _, timeseries = final_fc.shape
-
-#     _, node_size, node_feature_size = final_pearson.shape
-
-#     scaler = StandardScaler(mean=np.mean(
-#         final_fc), std=np.std(final_fc))
-    
-#     final_fc = scaler.transform(final_fc)
-
-
-#     pseudo = []
-#     for i in range(len(final_fc)):
-#         pseudo.append(np.diag(np.ones(final_pearson.shape[1])))
-
-#     if 'cc200' in  dataset_config['atlas']:
-#         pseudo_arr = np.concatenate(pseudo, axis=0).reshape((-1, 200, 200))
-#     elif 'aal' in dataset_config['atlas']:
-#         pseudo_arr = np.concatenate(pseudo, axis=0).reshape((-1, 116, 116))
-#     elif 'cc400' in dataset_config['atlas']:
-#         pseudo_arr = np.concatenate(pseudo, axis=0).reshape((-1, 392, 392))
-#     else:
-#         pseudo_arr = np.concatenate(pseudo, axis=0).reshape((-1, 111, 111))
-
-#     use_smri = dataset_config.get("use_smri", False)
-#     num_subjects = final_fc.shape[0]
-#     if use_smri:
-#         smri_features, smri_dim = load_smri_features(dataset_config, num_subjects)
-#     else:
-#         smri_features = np.zeros((num_subjects, 1), dtype=np.float64)
-#         smri_dim = 1
-        
-#     # final_fc, final_pearson, labels, pseudo_arr = [torch.from_numpy(
-#     #     data).float() for data in (final_fc, final_pearson, labels, pseudo_arr)]
-#     final_fc, final_pearson, labels, pseudo_arr, smri_features = [
-#         torch.from_numpy(data).float()
-#         for data in (final_fc, final_pearson, labels, pseudo_arr, smri_features)
-#     ]
-#     length = final_fc.shape[0]
-#     train_length = int(length*dataset_config["train_set"])
-#     val_length = int(length*dataset_config["val_set"])
-
-
-#     dataset = utils.TensorDataset(
-#         final_fc,
-#         final_pearson,
-#         labels,
-#         pseudo_arr,
-#         smri_features
-#     )
-
-#     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-#         dataset, [train_length, val_length, length-train_length-val_length])
-
-#     train_dataloader = utils.DataLoader(
-#         train_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
-
-#     val_dataloader = utils.DataLoader(
-#         val_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
-
-#     test_dataloader = utils.DataLoader(
-#         test_dataset, batch_size=dataset_config["batch_size"], shuffle=True, drop_last=False)
-
-
-#     return (train_dataloader, val_dataloader, test_dataloader), node_size, node_feature_size, timeseries, smri_dim
 
 
 def init_dataloader(dataset_config):
@@ -303,16 +214,11 @@ def init_dataloader(dataset_config):
         torch.from_numpy(data).float()
         for data in (final_fc, final_pearson, labels, pseudo_arr, smri_features)
     ]
-    # length = final_fc.shape[0]
-    # train_length = int(length * dataset_config["train_set"])
-    # val_length = int(length * dataset_config["val_set"])
 
     dataset = utils.TensorDataset(
         final_fc, final_pearson, labels, pseudo_arr, smri_features
     )
 
-    # train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-    #     dataset, [train_length, val_length, length - train_length - val_length])
     train_dataset = utils.Subset(dataset, train_idx)
     val_dataset = utils.Subset(dataset, val_idx)
     test_dataset = utils.Subset(dataset, test_idx)
@@ -321,9 +227,6 @@ def init_dataloader(dataset_config):
     
     if use_smri and smri_encoder_type == "multiview_gcn":
         from imports.smri_graph_build import build_fold_graphs
-        # train_idx = train_dataset.indices  # torch's Subset exposes this directly
-        # k_per_view = dataset_config.get("mvgcn_k_neighbors", {"aseg": 8, "aparc": 32, "wmparc": 16})
-        # base_edge_index, base_edge_weight = build_fold_graphs(view_node_features, train_idx, k_per_view)
         k_per_view = dataset_config.get("mvgcn_k_neighbors", {"aseg": 8, "aparc": 32, "wmparc": 16})
         metric_per_view = dataset_config.get("mvgcn_graph_metric_per_view", {})  
         base_edge_index, base_edge_weight = build_fold_graphs(

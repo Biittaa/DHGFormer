@@ -40,22 +40,8 @@ def main(args, current_seed):
                          mvgcn_view_meta=mvgcn_view_meta,
                          mvgcn_fold_graphs=mvgcn_fold_graphs)
 
-        # dataloaders, node_size, node_feature_size, timeseries_size, smri_dim = \
-        #     init_dataloader(config['data'])
-        # config['train']["seq_len"] = timeseries_size
-        # config['train']["node_size"] = node_size
-
-        # # model = DHGFormer(config['model'], node_size,
-        # #                  node_feature_size, timeseries_size)
-        # model = DHGFormer(config['model'], node_size,
-        #                  node_feature_size, timeseries_size,
-        #                  use_smri=config['data'].get('use_smri', False),
-        #                  smri_input_dim=smri_dim)
         use_train = BasicTrain
 
-        # optimizer = torch.optim.Adam(
-        #     model.parameters(), lr=config['train']['lr'],
-        #     weight_decay=config['train']['weight_decay'])
         no_decay_params = []
         decay_params = []
         for name, p in model.named_parameters():
@@ -84,7 +70,6 @@ def main(args, current_seed):
         train_process = use_train(
             config['train'], model, opts, dataloaders, save_folder_name)
 
-        # train_process.train()
         return train_process.train()
 
 if __name__ == '__main__':

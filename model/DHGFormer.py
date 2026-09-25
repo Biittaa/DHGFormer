@@ -354,62 +354,6 @@ class DHGFormer(nn.Module):
 
             self.fusion_classifier = nn.Linear(fusion_input_dim, 2)
         
-        
-        
-        
-        
-        
-        
-        
-        
-        # if self.use_smri:
-        #     # smri_hid_1 = model_config.get('smri_hid_1', 500)
-        #     smri_hid_2 = model_config.get('smri_hid_2', 30)
-        #     smri_dropout = model_config.get('smri_dropout', 0.5)
-        #     smri_encoder_type = model_config.get('smri_encoder_type', 'fcn')
-            
-        #     if smri_encoder_type == 'transformer':
-        #         smri_patch_size = model_config.get('smri_patch_size', 32)
-        #         smri_embed_dim = model_config.get('smri_embed_dim', 64)
-        #         smri_num_heads = model_config.get('smri_num_heads', 4)
-        #         smri_num_layers = model_config.get('smri_num_layers', 2)
-        #         self.smri_encoder = SMRITransformerEncoder(
-        #             input_dim=smri_input_dim,
-        #             patch_size=smri_patch_size,
-        #             embed_dim=smri_embed_dim,
-        #             num_heads=smri_num_heads,
-        #             num_layers=smri_num_layers,
-        #             hid_2=smri_hid_2,
-        #             dropout=smri_dropout
-        #         )
-        #     else:
-        #         smri_hid_1 = model_config.get('smri_hid_1', 500)
-        #         self.smri_encoder = SMRIFCNEncoder(
-        #             input_dim=smri_input_dim,
-        #             hid_1=smri_hid_1,
-        #             hid_2=smri_hid_2,
-        #             dropout=smri_dropout
-        #         )
-        #     # self.smri_encoder = SMRIFCNEncoder(
-        #     #     input_dim=smri_input_dim,
-        #     #     hid_1=smri_hid_1,
-        #     #     hid_2=smri_hid_2,
-        #     #     dropout=smri_dropout
-        #     # )
-        #     fmri_embed_dim = 8 * roi_num
-        #     fusion_input_dim = fmri_embed_dim + smri_hid_2
-        #     if self.fusion_method == 'attention':
-        #             fusion_hidden_dim = model_config.get('fusion_hidden_dim', 64)
-        #             self.modality_fusion = ModalityAttentionFusion(
-        #                 fmri_dim=fmri_embed_dim,
-        #                 smri_dim=smri_hid_2,
-        #                 hidden_dim=fusion_hidden_dim
-        #             )
-        #     elif self.fusion_method != 'concat':
-        #         raise ValueError(f"Unknown fusion_method: {self.fusion_method}")
-
-        #     self.fusion_classifier = nn.Linear(fusion_input_dim, 2)
-            # self.fusion_classifier = nn.Linear(fusion_input_dim, 2)
 
         # Load node cluster mapping
         with open('./node_clus_map.pickle', 'rb') as f:
@@ -461,13 +405,6 @@ class DHGFormer(nn.Module):
         batch_size = full_adjacency.shape[0]
         edge_variance = torch.mean(torch.var(full_adjacency.reshape((batch_size, -1)), dim=1))
 
-        # Make prediction
-        # prediction = self.predictor(
-        #     full_adjacency,
-        #     intra_adjacency,
-        #     inter_adjacency,
-        #     node_features
-        # )
         
         fmri_tokens = self.predictor.forward_features(
             full_adjacency, intra_adjacency, inter_adjacency, node_features,
@@ -481,23 +418,6 @@ class DHGFormer(nn.Module):
             node_features
         )
 
-        # if self.use_smri and smri_features is not None:
-        #     smri_embedding = self.smri_encoder(smri_features)
-        #     fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
-        #     prediction = self.fusion_classifier(fused_embedding)
-        # else:
-        #     prediction = self.predictor.classifier(fmri_embedding)
-        # if self.use_smri and smri_features is not None:
-        #         smri_embedding = self.smri_encoder(smri_features)
-
-        #         if self.fusion_method == 'attention':
-        #             fused_embedding, modality_weights = self.modality_fusion(fmri_embedding, smri_embedding)
-        #         else:  # concat
-        #             fused_embedding = torch.cat([fmri_embedding, smri_embedding], dim=1)
-
-        #         prediction = self.fusion_classifier(fused_embedding)
-        # else:
-        #     prediction = self.predictor.classifier(fmri_embedding)
         
         if self.use_smri and smri_features is not None:
             if self.fusion_method == 'cross_attention':
