@@ -6,9 +6,10 @@ roar_captum_dhgformer.py
 
 ROAR (RemOve And Retrain) explainability for the **real** DHGFormer repo,
 using the **real** `MultiViewGCN` sMRI encoder in `smri_only` mode, attributed
-with **Captum** (Integrated Gradients / DeepLift), run through **main.py's**
-data path (`dataloader.init_dataloader`, single train/val/test split) -- NOT
-the k-fold path.
+with **Captum** -- all 7 methods: Integrated Gradients, Guided Backprop,
+DeepLift, DeepLiftShap, GradientShap, LIME, KernelSHAP -- run through
+**main.py's** data path (`dataloader.init_dataloader`, single train/val/test
+split) -- NOT the k-fold path.
 
 This does NOT reimplement the model or the data pipeline. It imports and
 calls your existing `dataloader.init_dataloader`, `model.DHGFormer.DHGFormer`
@@ -111,9 +112,12 @@ USAGE (run from the repo root, i.e. next to main.py / dataloader.py / model/)
         --deeplift_baseline zero \
         --target_class_mode true
 
-Add `--methods random` to also include the random-order baseline (useful as
-a sanity comparison, exactly like the paper's Fig. 5 / your own
-roar_analysis.py).
+All 7 Captum methods are available via `--methods`: ig, guided_backprop,
+deeplift, deeplift_shap, gradient_shap, lime, kernel_shap -- plus `random`
+as a sanity-comparison baseline (exactly like the paper's Fig. 5 / your own
+roar_analysis.py). lime/kernel_shap are perturbation-based and run
+per-subject (much slower than the gradient-based methods) -- tune
+--lime_n_samples / --kernelshap_n_samples accordingly.
 
 To only (re)compute the baseline and stop (no captum / no ROAR retraining
 loop), pass `--baseline_only`.
@@ -421,15 +425,84 @@ def _select_targets(logits, labels, target_mode):
     raise ValueError(f"Unknown target_mode: {target_mode!r}")
 
 
+GRADIENT_BASED_METHODS = {"ig", "guided_backprop", "deeplift", "deeplift_shap", "gradient_shap"}
+PERTURBATION_BASED_METHODS = {"lime", "kernel_shap"}
+ALL_CAPTUM_METHODS = GRADIENT_BASED_METHODS | PERTURBATION_BASED_METHODS
+
+
+def build_node_feature_mask(offset_table, device):
+    """Groups every flat column into its (view, node) group -- all
+    sub-features of the same ROI node get the same group id -- plus one
+    group per extra (global/pheno) column. This is what LIME/KernelSHAP
+    perturb as a single unit; without this, the interpretable space would
+    be the full flat dimension (often >1000), which is intractable for
+    perturbation-based methods. Returns a (1, total_dim) LongTensor, as
+    Captum's `feature_mask` expects."""
+    total_dim = offset_table["total_dim"]
+    mask = torch.zeros(total_dim, dtype=torch.long)
+    group_id = 0
+    for v in offset_table["view_names"]:
+        n_nodes = offset_table["n_nodes_per_view"][v]
+        n_subfeat = offset_table["n_subfeat_per_view"][v]
+        start = offset_table["view_col_offset"][v]
+        for node_idx in range(n_nodes):
+            mask[start + node_idx * n_subfeat: start + (node_idx + 1) * n_subfeat] = group_id
+            group_id += 1
+    for i in range(offset_table["extra_dim"]):
+        mask[offset_table["extra_offset"] + i] = group_id
+        group_id += 1
+    return mask.unsqueeze(0).to(device)
+
+
+def gather_background_samples(train_dataloader, n_samples, mode, device, seed):
+    """Background/reference set for DeepLiftShap & GradientShap.
+    mode: 'zero' -> n_samples copies of the zero vector.
+          'train_sample' -> n_samples subjects randomly drawn from the train
+          split (deterministic given `seed`; called AFTER training is done,
+          so this never perturbs the reproduction of the baseline run)."""
+    all_smri = []
+    for _data_in, _pearson, _label, _pseudo, smri in train_dataloader:
+        all_smri.append(smri)
+    all_smri = torch.cat(all_smri, dim=0)
+
+    if mode == "zero":
+        return torch.zeros(n_samples, all_smri.shape[1], device=device)
+    if mode == "train_sample":
+        rng = np.random.default_rng(seed)
+        n_avail = all_smri.shape[0]
+        idx = rng.choice(n_avail, size=min(n_samples, n_avail), replace=(n_samples > n_avail))
+        return all_smri[idx].to(device).float()
+    raise ValueError(f"Unsupported shap_background mode: {mode!r}")
+
+
 def compute_attributions(model, train_dataloader, method, offset_table, device,
-                          ig_steps=64, deeplift_baseline="zero", target_mode="true"):
+                          ig_steps=64, deeplift_baseline="zero", target_mode="true",
+                          shap_background="train_sample", n_background_samples=20,
+                          gradientshap_n_samples=20, gradientshap_stdev=0.0,
+                          lime_n_samples=200, kernelshap_n_samples=200,
+                          lime_group_by_node=True, kernelshap_group_by_node=True,
+                          seed=0):
     """Runs the requested Captum method over every subject in the TRAIN
     split (never val/test, to avoid leaking split information into the
     ranking used for ROAR), and returns the mean |attribution| as a flat
     numpy vector of length offset_table['total_dim'].
-    method: 'ig' | 'deeplift'
+
+    method: one of ALL_CAPTUM_METHODS
+      - ig, guided_backprop, deeplift, deeplift_shap, gradient_shap:
+        gradient/hook-based, run batched (fast).
+      - lime, kernel_shap: perturbation-based; Captum explains one instance
+        at a time for these, so they're run per-subject (slow -- tune
+        lime_n_samples / kernelshap_n_samples accordingly). By default the
+        interpretable space is grouped per ROI node (see
+        build_node_feature_mask) rather than per raw column, or these would
+        be intractable given hundreds-to-thousands of raw sMRI columns.
     """
-    from captum.attr import IntegratedGradients, DeepLift
+    from captum.attr import (
+        IntegratedGradients, GuidedBackprop, DeepLift, DeepLiftShap,
+        GradientShap, Lime, KernelShap,
+    )
+    if method not in ALL_CAPTUM_METHODS:
+        raise ValueError(f"Unsupported captum method: {method!r}")
 
     wrapper = SMRIOnlyCaptumWrapper(model).to(device)
     wrapper.eval()
@@ -439,37 +512,80 @@ def compute_attributions(model, train_dataloader, method, offset_table, device,
     n_seen = 0
 
     with _non_inplace_relu(wrapper):
-        if method == "ig":
-            explainer = IntegratedGradients(wrapper)
-        elif method == "deeplift":
-            explainer = DeepLift(wrapper)
-        else:
-            raise ValueError(f"Unsupported captum method: {method!r}")
 
-        for data_in, pearson, label, _pseudo, smri in train_dataloader:
-            smri = smri.to(device).float()
-            label = label.to(device).long().view(-1)
-            smri.requires_grad_(True)
-
-            with torch.no_grad():
-                logits = wrapper(smri)
-            targets = _select_targets(logits, label, target_mode)
-
-            if deeplift_baseline == "zero" or method == "ig":
-                baselines = torch.zeros_like(smri)
-            elif deeplift_baseline == "mean":
-                baselines = smri.mean(dim=0, keepdim=True).expand_as(smri).clone()
-            else:
-                raise ValueError(f"Unsupported baseline: {deeplift_baseline!r}")
-
+        # ---------------- gradient / hook-based methods (batched) ----------------
+        if method in GRADIENT_BASED_METHODS:
             if method == "ig":
-                attr = explainer.attribute(smri, baselines=baselines, target=targets,
-                                            n_steps=ig_steps)
-            else:  # deeplift
-                attr = explainer.attribute(smri, baselines=baselines, target=targets)
+                explainer = IntegratedGradients(wrapper)
+            elif method == "guided_backprop":
+                explainer = GuidedBackprop(wrapper)
+            elif method == "deeplift":
+                explainer = DeepLift(wrapper)
+            elif method == "deeplift_shap":
+                explainer = DeepLiftShap(wrapper)
+            elif method == "gradient_shap":
+                explainer = GradientShap(wrapper)
 
-            abs_sum += attr.detach().abs().double().sum(dim=0).cpu()
-            n_seen += smri.shape[0]
+            background = None
+            if method in ("deeplift_shap", "gradient_shap"):
+                background = gather_background_samples(
+                    train_dataloader, n_background_samples, shap_background, device, seed)
+
+            for data_in, pearson, label, _pseudo, smri in train_dataloader:
+                smri = smri.to(device).float()
+                label = label.to(device).long().view(-1)
+                smri.requires_grad_(True)
+
+                with torch.no_grad():
+                    logits = wrapper(smri)
+                targets = _select_targets(logits, label, target_mode)
+
+                if method == "guided_backprop":
+                    attr = explainer.attribute(smri, target=targets)
+                elif method == "ig":
+                    baselines = torch.zeros_like(smri)
+                    attr = explainer.attribute(smri, baselines=baselines, target=targets,
+                                                n_steps=ig_steps)
+                elif method == "deeplift":
+                    if deeplift_baseline == "zero":
+                        baselines = torch.zeros_like(smri)
+                    else:  # mean
+                        baselines = smri.mean(dim=0, keepdim=True).expand_as(smri).clone()
+                    attr = explainer.attribute(smri, baselines=baselines, target=targets)
+                elif method == "deeplift_shap":
+                    attr = explainer.attribute(smri, baselines=background, target=targets)
+                elif method == "gradient_shap":
+                    attr = explainer.attribute(smri, baselines=background, target=targets,
+                                                n_samples=gradientshap_n_samples,
+                                                stdevs=gradientshap_stdev)
+
+                abs_sum += attr.detach().abs().double().sum(dim=0).cpu()
+                n_seen += smri.shape[0]
+
+        # ---------------- perturbation-based methods (per-subject) ----------------
+        else:
+            group_by_node = lime_group_by_node if method == "lime" else kernelshap_group_by_node
+            feature_mask = build_node_feature_mask(offset_table, device) if group_by_node else None
+            n_samples = lime_n_samples if method == "lime" else kernelshap_n_samples
+            explainer = Lime(wrapper) if method == "lime" else KernelShap(wrapper)
+
+            for data_in, pearson, label, _pseudo, smri in train_dataloader:
+                smri = smri.to(device).float()
+                label = label.to(device).long().view(-1)
+
+                with torch.no_grad():
+                    logits = wrapper(smri)
+                targets = _select_targets(logits, label, target_mode)
+
+                for i in range(smri.shape[0]):
+                    x_i = smri[i:i + 1]
+                    baseline_i = torch.zeros_like(x_i)
+                    fmask_i = feature_mask if feature_mask is not None else None
+                    attr_i = explainer.attribute(
+                        x_i, baselines=baseline_i, target=int(targets[i].item()),
+                        feature_mask=fmask_i, n_samples=n_samples)
+                    abs_sum += attr_i.detach().abs().double().squeeze(0).cpu()
+                    n_seen += 1
 
     return (abs_sum / max(n_seen, 1)).numpy()
 
@@ -582,11 +698,39 @@ def main():
                      help="Drive folder to save baseline checkpoint, importance tables and "
                           "the append-only ROAR history CSV into.")
     ap.add_argument("--methods", nargs="+", default=["ig", "deeplift"],
-                     choices=["ig", "deeplift", "random"])
-    ap.add_argument("--ig_steps", type=int, default=64)
-    ap.add_argument("--deeplift_baseline", choices=["zero", "mean"], default="zero")
+                     choices=["ig", "guided_backprop", "deeplift", "deeplift_shap",
+                              "gradient_shap", "lime", "kernel_shap", "random"])
     ap.add_argument("--target_class_mode", default="true",
-                     help="'true' | 'predicted' | an integer class index")
+                     help="'true' | 'predicted' | an integer class index. Applies to every "
+                          "captum method (not to 'random').")
+    # -- Integrated Gradients --
+    ap.add_argument("--ig_steps", type=int, default=64)
+    # -- DeepLift (single baseline) --
+    ap.add_argument("--deeplift_baseline", choices=["zero", "mean"], default="zero")
+    # -- DeepLiftShap / GradientShap (background/reference SET, not a single baseline) --
+    ap.add_argument("--shap_background", choices=["zero", "train_sample"], default="train_sample",
+                     help="Reference set for deeplift_shap/gradient_shap: n_background_samples "
+                          "copies of zero, or that many subjects sampled from the train split.")
+    ap.add_argument("--n_background_samples", type=int, default=20,
+                     help="Size of the background/reference set for deeplift_shap/gradient_shap.")
+    ap.add_argument("--gradientshap_n_samples", type=int, default=20,
+                     help="GradientShap's internal number of randomized samples per input.")
+    ap.add_argument("--gradientshap_stdev", type=float, default=0.0,
+                     help="GradientShap's Gaussian noise stdev added around each baseline.")
+    # -- LIME / KernelSHAP (perturbation-based, run per-subject) --
+    ap.add_argument("--lime_n_samples", type=int, default=200,
+                     help="Perturbed samples per subject for LIME. Runtime scales with "
+                          "n_train_subjects * lime_n_samples -- tune down if too slow.")
+    ap.add_argument("--kernelshap_n_samples", type=int, default=200,
+                     help="Perturbed samples per subject for KernelSHAP. Same cost note as LIME.")
+    ap.add_argument("--lime_group_by_node", action="store_true", default=True,
+                     help="Group all sub-features of the same ROI node into one interpretable "
+                          "unit for LIME (default: on -- keeps it tractable).")
+    ap.add_argument("--no_lime_group_by_node", dest="lime_group_by_node", action="store_false")
+    ap.add_argument("--kernelshap_group_by_node", action="store_true", default=True,
+                     help="Same grouping, for KernelSHAP.")
+    ap.add_argument("--no_kernelshap_group_by_node", dest="kernelshap_group_by_node",
+                     action="store_false")
     ap.add_argument("--thresholds", type=float, nargs="+", default=None,
                      help=f"Default: {DEFAULT_ROAR_THRESHOLDS}")
     ap.add_argument("--recompute_threshold_zero", action="store_true",
@@ -684,21 +828,45 @@ def main():
             ranking_cols = get_random_ranking(offset_table, seed=current_seed)
             score_vector = None
         else:
+            method_params = {"target_mode": args.target_class_mode}
             if method == "ig":
-                method_params = {"n_steps": args.ig_steps, "baseline": "zero",
-                                  "target_mode": args.target_class_mode}
-                score_vector = compute_attributions(
-                    model, train_dataloader, "ig", offset_table, device,
-                    ig_steps=args.ig_steps, target_mode=args.target_class_mode)
+                method_params.update({"n_steps": args.ig_steps, "baseline": "zero"})
+            elif method == "guided_backprop":
+                pass
             elif method == "deeplift":
-                method_params = {"baseline": args.deeplift_baseline,
-                                  "target_mode": args.target_class_mode}
-                score_vector = compute_attributions(
-                    model, train_dataloader, "deeplift", offset_table, device,
-                    deeplift_baseline=args.deeplift_baseline,
-                    target_mode=args.target_class_mode)
+                method_params.update({"baseline": args.deeplift_baseline})
+            elif method == "deeplift_shap":
+                method_params.update({"shap_background": args.shap_background,
+                                       "n_background_samples": args.n_background_samples})
+            elif method == "gradient_shap":
+                method_params.update({"shap_background": args.shap_background,
+                                       "n_background_samples": args.n_background_samples,
+                                       "gradientshap_n_samples": args.gradientshap_n_samples,
+                                       "gradientshap_stdev": args.gradientshap_stdev})
+            elif method == "lime":
+                method_params.update({"n_samples": args.lime_n_samples,
+                                       "group_by_node": args.lime_group_by_node})
+            elif method == "kernel_shap":
+                method_params.update({"n_samples": args.kernelshap_n_samples,
+                                       "group_by_node": args.kernelshap_group_by_node})
             else:
                 raise ValueError(method)
+
+            score_vector = compute_attributions(
+                model, train_dataloader, method, offset_table, device,
+                ig_steps=args.ig_steps,
+                deeplift_baseline=args.deeplift_baseline,
+                target_mode=args.target_class_mode,
+                shap_background=args.shap_background,
+                n_background_samples=args.n_background_samples,
+                gradientshap_n_samples=args.gradientshap_n_samples,
+                gradientshap_stdev=args.gradientshap_stdev,
+                lime_n_samples=args.lime_n_samples,
+                kernelshap_n_samples=args.kernelshap_n_samples,
+                lime_group_by_node=args.lime_group_by_node,
+                kernelshap_group_by_node=args.kernelshap_group_by_node,
+                seed=current_seed,
+            )
             ranking_cols = rank_columns_by_score(score_vector)
 
             # save full importance table for this method/run
