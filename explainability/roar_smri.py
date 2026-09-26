@@ -556,10 +556,23 @@ def compute_attributions(model, train_dataloader, method, offset_table, device,
                     attr = explainer.attribute(smri, baselines=baselines, target=targets)
                 elif method == "deeplift_shap":
                     attr = explainer.attribute(smri, baselines=background, target=targets)
+                # elif method == "gradient_shap":
+                #     attr = explainer.attribute(smri, baselines=background, target=targets,
+                #                                 n_samples=gradientshap_n_samples,
+                #                                 stdevs=gradientshap_stdev)
                 elif method == "gradient_shap":
-                    attr = explainer.attribute(smri, baselines=background, target=targets,
-                                                n_samples=gradientshap_n_samples,
-                                                stdevs=gradientshap_stdev)
+                    gs_chunk = getattr(args, "gradientshap_chunk_size", 8)
+                    for start in range(0, smri.shape[0], gs_chunk):
+                        end = start + gs_chunk
+                        smri_c = smri[start:end]
+                        targets_c = targets[start:end]
+                        attr_c = explainer.attribute(
+                            smri_c, baselines=background, target=targets_c,
+                            n_samples=gradientshap_n_samples,
+                            stdevs=gradientshap_stdev)
+                        abs_sum += attr_c.detach().abs().double().sum(dim=0).cpu()
+                        n_seen += smri_c.shape[0]
+                    continue  # already accumulated above, skip the shared block below
 
                 abs_sum += attr.detach().abs().double().sum(dim=0).cpu()
                 n_seen += smri.shape[0]
