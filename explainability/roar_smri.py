@@ -547,7 +547,7 @@ def compute_attributions(model, train_dataloader, method, offset_table, device,
                 elif method == "ig":
                     baselines = torch.zeros_like(smri)
                     attr = explainer.attribute(smri, baselines=baselines, target=targets,
-                                                n_steps=ig_steps)
+                                                n_steps=ig_steps, internal_batch_size=32)
                 elif method == "deeplift":
                     if deeplift_baseline == "zero":
                         baselines = torch.zeros_like(smri)
