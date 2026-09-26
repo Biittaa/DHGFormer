@@ -481,6 +481,7 @@ def compute_attributions(model, train_dataloader, method, offset_table, device,
                           ig_steps=64, deeplift_baseline="zero", target_mode="true",
                           shap_background="train_sample", n_background_samples=20,
                           gradientshap_n_samples=20, gradientshap_stdev=0.0,
+                          gradientshap_chunk_size=8,
                           lime_n_samples=200, kernelshap_n_samples=200,
                           lime_group_by_node=True, kernelshap_group_by_node=True,
                           seed=0):
@@ -556,14 +557,9 @@ def compute_attributions(model, train_dataloader, method, offset_table, device,
                     attr = explainer.attribute(smri, baselines=baselines, target=targets)
                 elif method == "deeplift_shap":
                     attr = explainer.attribute(smri, baselines=background, target=targets)
-                # elif method == "gradient_shap":
-                #     attr = explainer.attribute(smri, baselines=background, target=targets,
-                #                                 n_samples=gradientshap_n_samples,
-                #                                 stdevs=gradientshap_stdev)
                 elif method == "gradient_shap":
-                    gs_chunk = getattr(args, "gradientshap_chunk_size", 8)
-                    for start in range(0, smri.shape[0], gs_chunk):
-                        end = start + gs_chunk
+                    for start in range(0, smri.shape[0], gradientshap_chunk_size):
+                        end = start + gradientshap_chunk_size
                         smri_c = smri[start:end]
                         targets_c = targets[start:end]
                         attr_c = explainer.attribute(
@@ -572,7 +568,7 @@ def compute_attributions(model, train_dataloader, method, offset_table, device,
                             stdevs=gradientshap_stdev)
                         abs_sum += attr_c.detach().abs().double().sum(dim=0).cpu()
                         n_seen += smri_c.shape[0]
-                    continue  # already accumulated above, skip the shared block below
+                    continue
 
                 abs_sum += attr.detach().abs().double().sum(dim=0).cpu()
                 n_seen += smri.shape[0]
@@ -732,6 +728,9 @@ def main():
                      help="GradientShap's internal number of randomized samples per input.")
     ap.add_argument("--gradientshap_stdev", type=float, default=0.0,
                      help="GradientShap's Gaussian noise stdev added around each baseline.")
+    ap.add_argument("--gradientshap_chunk_size", type=int, default=8,
+                     help="Sub-batch size for GradientShap to avoid OOM (does not change the "
+                          "averaged result across subjects, only reduces peak memory).")
     # -- LIME / KernelSHAP (perturbation-based, run per-subject) --
     ap.add_argument("--lime_n_samples", type=int, default=200,
                      help="Perturbed samples per subject for LIME. Runtime scales with "
@@ -876,6 +875,7 @@ def main():
                 n_background_samples=args.n_background_samples,
                 gradientshap_n_samples=args.gradientshap_n_samples,
                 gradientshap_stdev=args.gradientshap_stdev,
+                gradientshap_chunk_size=args.gradientshap_chunk_size,
                 lime_n_samples=args.lime_n_samples,
                 kernelshap_n_samples=args.kernelshap_n_samples,
                 lime_group_by_node=args.lime_group_by_node,
